@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Thème principal de l'application -->
+    <style name="Theme.FastPhotosRenamer" parent="android:Theme.Material.Light.NoActionBar" />
+    
+    <!-- Thème pour l'écran de démarrage compatible avec Android 12+ -->
+    <style name="Theme.FastPhotosRenamer.SplashScreen" parent="Theme.SplashScreen">
+        <!-- Couleur de fond du splash -->
+        <item name="windowSplashScreenBackground">@color/white</item>
+        
+        <!-- Icône du splash -->
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_image</item>
+        
+        <!-- Animation facultative -->
+        <item name="windowSplashScreenAnimationDuration">300</item>
+        
+        <!-- Thème qui sera appliqué après le splash -->
+        <item name="postSplashScreenTheme">@style/Theme.FastPhotosRenamer</item>
+    </style>
+    
+    <!-- Thème pour l'écran de démarrage pour les anciennes versions d'Android -->
+    <style name="SplashTheme" parent="Theme.FastPhotosRenamer">
+        <item name="android:windowBackground">@drawable/splash_screen</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+</resources>
