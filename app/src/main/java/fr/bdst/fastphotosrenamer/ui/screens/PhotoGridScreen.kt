@@ -1,6 +1,7 @@
 package fr.bdst.fastphotosrenamer.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,16 +16,19 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -38,19 +42,25 @@ import fr.bdst.fastphotosrenamer.model.PhotoModel
 fun PhotoGridScreen(
     photos: List<PhotoModel>,
     onPhotoClick: (PhotoModel) -> Unit,
+    onPhotoZoom: (PhotoModel) -> Unit,
     showImages: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     if (showImages) {
         // Affichage en grille avec images
         LazyVerticalGrid(
-            columns = GridCells.Fixed(3),  // Exactement 3 colonnes
+            columns = GridCells.Fixed(3),  // Retour à 3 colonnes
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
             modifier = modifier.padding(4.dp)
         ) {
             items(photos) { photo ->
-                PhotoItem(photo = photo, onClick = { onPhotoClick(photo) }, showImage = true)
+                PhotoItem(
+                    photo = photo, 
+                    onClick = { onPhotoClick(photo) },
+                    onFullscreen = { onPhotoZoom(photo) },
+                    showImage = true
+                )
             }
         }
     } else {
@@ -86,12 +96,23 @@ fun PhotoGridScreen(
 }
 
 @Composable
-fun PhotoItem(photo: PhotoModel, onClick: () -> Unit, showImage: Boolean) {
+fun PhotoItem(
+    photo: PhotoModel, 
+    onClick: () -> Unit,
+    onFullscreen: () -> Unit,
+    showImage: Boolean
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .clickable(onClick = onClick),
+            // Utiliser uniquement pointerInput pour gérer à la fois le clic simple et le clic long
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = { onFullscreen() }
+                )
+            },
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column {
@@ -107,8 +128,8 @@ fun PhotoItem(photo: PhotoModel, onClick: () -> Unit, showImage: Boolean) {
                         model = ImageRequest.Builder(LocalContext.current)
                             .data(photo.uri)
                             .crossfade(true)
-                            .size(300) // Limiter la taille de chargement pour économiser de la mémoire
-                            .memoryCacheKey(photo.uri.toString()) // Améliorer la mise en cache
+                            .size(300)
+                            .memoryCacheKey(photo.uri.toString())
                             .diskCacheKey(photo.uri.toString())
                             .build(),
                         contentDescription = photo.name,

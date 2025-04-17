@@ -58,6 +58,19 @@ class PhotosViewModel : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
+    
+    // Nouveaux états pour le mode plein écran
+    private val _fullscreenMode = MutableStateFlow(false)
+    val fullscreenMode: StateFlow<Boolean> = _fullscreenMode
+    
+    // Index de la photo actuellement affichée en mode plein écran
+    private val _fullscreenPhotoIndex = MutableStateFlow(0)
+    val fullscreenPhotoIndex: StateFlow<Int> = _fullscreenPhotoIndex
+    
+    // État pour suivre si on était en mode plein écran avant d'aller sur l'écran de renommage
+    private val _wasInFullscreenMode = MutableStateFlow(false)
+    val wasInFullscreenMode: Boolean
+        get() = _wasInFullscreenMode.value
 
     companion object {
         const val APP_FOLDER_NAME = "FPR"
@@ -112,12 +125,22 @@ class PhotosViewModel : ViewModel() {
                 appFolder.mkdir()
             }
             
-            // Ajouter uniquement les sous-dossiers de FPR, pas FPR lui-même
+            // Collecte tous les sous-dossiers avec leur timestamp de dernière modification
+            val foldersWithTimestamp = mutableListOf<Pair<String, Long>>()
+            
             appFolder.listFiles()?.filter { it.isDirectory }?.forEach {
-                folders.add(it.absolutePath)
+                foldersWithTimestamp.add(Pair(it.absolutePath, it.lastModified()))
             }
             
-            _availableFolders.value = folders
+            // Tri des dossiers par date de dernière modification (du plus récent au plus ancien)
+            val sortedFolders = foldersWithTimestamp.sortedByDescending { it.second }
+            
+            // Ajouter DCIM/Camera en premier, puis les autres dossiers triés
+            if (cameraFolder.exists() && cameraFolder.isDirectory) {
+                _availableFolders.value = listOf(cameraFolder.absolutePath) + sortedFolders.map { it.first }
+            } else {
+                _availableFolders.value = sortedFolders.map { it.first }
+            }
         }
     }
 
@@ -314,7 +337,7 @@ class PhotosViewModel : ViewModel() {
                 _photos.value = photosList
                 
                 // Mettre à jour la photo sélectionnée
-                _selectedPhoto.value?.let { currentSelected ->
+                _selectedPhoto.value?.let { currentSelected -> 
                     val updatedPhoto = photosList.find { it.uri == currentSelected.uri }
                     _selectedPhoto.value = updatedPhoto
                 }
@@ -384,7 +407,7 @@ class PhotosViewModel : ViewModel() {
                 _photos.value = photosList
             
                 // Mettre à jour la photo sélectionnée
-                _selectedPhoto.value?.let { currentSelected ->
+                _selectedPhoto.value?.let { currentSelected -> 
                     val updatedPhoto = photosList.find { it.uri == currentSelected.uri }
                     _selectedPhoto.value = updatedPhoto
                 }
@@ -404,7 +427,7 @@ class PhotosViewModel : ViewModel() {
     }
     
     fun updateSelectedPhotoAfterRename(newName: String) {
-        _selectedPhoto.value?.let { currentPhoto ->
+        _selectedPhoto.value?.let { currentPhoto -> 
             val updatedPhoto = currentPhoto.copy(name = newName)
             _selectedPhoto.value = updatedPhoto
         }
@@ -892,5 +915,59 @@ class PhotosViewModel : ViewModel() {
                lowerName.contains("~") ||    // Fichiers temporaires
                lowerName.endsWith(".tmp")    // Autres fichiers temporaires
     }
+    
+    // Méthodes pour le mode plein écran
+    
+    // Activer/désactiver le mode plein écran
+    fun setFullscreenMode(enabled: Boolean) {
+        _fullscreenMode.value = enabled
+    }
+    
+    // Définir l'index de la photo actuellement affichée en plein écran
+    fun setFullscreenPhotoIndex(index: Int) {
+        if (index >= 0 && index < _photos.value.size) {
+            _fullscreenPhotoIndex.value = index
+            // Mettre également à jour la photo sélectionnée pour la cohérence
+            _selectedPhoto.value = _photos.value[index]
+        }
+    }
+    
+    // Passer à la photo suivante en mode plein écran
+    fun nextFullscreenPhoto() {
+        val currentIndex = _fullscreenPhotoIndex.value
+        val photosSize = _photos.value.size
+        
+        if (photosSize > 0) {
+            // Passer à la photo suivante avec retour au début si on atteint la fin
+            val nextIndex = (currentIndex + 1) % photosSize
+            setFullscreenPhotoIndex(nextIndex)
+        }
+    }
+    
+    // Passer à la photo précédente en mode plein écran
+    fun previousFullscreenPhoto() {
+        val currentIndex = _fullscreenPhotoIndex.value
+        val photosSize = _photos.value.size
+        
+        if (photosSize > 0) {
+            // Passer à la photo précédente avec retour à la fin si on est au début
+            val prevIndex = (currentIndex - 1 + photosSize) % photosSize
+            setFullscreenPhotoIndex(prevIndex)
+        }
+    }
+    
+    // Obtenir l'index de la photo correspondant à un modèle PhotoModel
+    fun getPhotoIndex(photo: PhotoModel): Int {
+        return _photos.value.indexOf(photo)
+    }
 
+    // Réinitialiser l'état wasInFullscreenMode
+    fun resetWasInFullscreenMode() {
+        _wasInFullscreenMode.value = false
+    }
+    
+    // Mémoriser que l'on vient du mode plein écran
+    fun setWasInFullscreenMode(value: Boolean) {
+        _wasInFullscreenMode.value = value
+    }
 }

@@ -64,6 +64,10 @@ fun MainScreen(
     val availableFolders by viewModel.availableFolders.collectAsStateWithLifecycle(initialValue = emptyList())
     val shouldOpenFolderDropdown by viewModel.shouldOpenFolderDropdown.collectAsStateWithLifecycle(initialValue = false)
     
+    // Nouveaux états pour le mode plein écran
+    val fullscreenMode by viewModel.fullscreenMode.collectAsStateWithLifecycle(initialValue = false)
+    val fullscreenPhotoIndex by viewModel.fullscreenPhotoIndex.collectAsStateWithLifecycle(initialValue = 0)
+    
     val context = LocalContext.current
     
     var showImages by remember { mutableStateOf(true) }
@@ -90,12 +94,54 @@ fun MainScreen(
         }
     }
     
-    if (selectedPhoto != null) {
+    // Mode plein écran prioritaire sur tout le reste
+    if (fullscreenMode && photos.isNotEmpty()) {
+        PhotoFullscreenScreen(
+            photos = photos,
+            initialPhotoIndex = fullscreenPhotoIndex,
+            onBack = { 
+                // Correction du retour : désactiver le mode plein écran sans sélectionner de photo
+                viewModel.setFullscreenMode(false) 
+                // Garantir qu'aucune photo n'est sélectionnée pour revenir à la grille
+                viewModel.clearSelectedPhoto()
+            },
+            onRename = { photo, ctx ->
+                // Sauvegarder l'état du mode plein écran et l'index actuel
+                val currentIndex = viewModel.fullscreenPhotoIndex.value
+                // Indiquer qu'on vient du mode plein écran pour pouvoir y revenir
+                viewModel.setWasInFullscreenMode(true)
+                // Temporairement désactiver le mode plein écran pour renommer
+                viewModel.setFullscreenMode(false)
+                viewModel.selectPhoto(photo)
+            },
+            onLaunchCamera = onCameraClick,
+            viewModel = viewModel
+        )
+    }
+    // Mode détail d'une photo sélectionnée
+    else if (selectedPhoto != null) {
         PhotoDetailScreen(
             photo = selectedPhoto!!,
-            onBack = { viewModel.clearSelectedPhoto() },
+            onBack = { 
+                // Si on vient du mode plein écran, y retourner après renommage
+                if (viewModel.wasInFullscreenMode) {
+                    viewModel.clearSelectedPhoto()
+                    viewModel.setFullscreenMode(true)
+                    viewModel.resetWasInFullscreenMode()
+                } else {
+                    // Comportement normal : retour à la grille
+                    viewModel.clearSelectedPhoto()
+                }
+            },
             onRename = { photo, newName, ctx ->
-                viewModel.renamePhoto(ctx, photo, newName)
+                val result = viewModel.renamePhoto(ctx, photo, newName)
+                // Si on vient du mode plein écran, retourner en mode plein écran après le renommage
+                if (viewModel.wasInFullscreenMode) {
+                    viewModel.clearSelectedPhoto()
+                    viewModel.setFullscreenMode(true)
+                    viewModel.resetWasInFullscreenMode()
+                }
+                result
             },
             onDelete = { photo, ctx ->
                 val result = viewModel.deletePhoto(ctx, photo)
@@ -105,7 +151,9 @@ fun MainScreen(
             viewModel = viewModel,
             startInRenamingMode = true // Activer le mode renommage direct
         )
-    } else {
+    } 
+    // Mode grille normal
+    else {
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -179,6 +227,14 @@ fun MainScreen(
             PhotoGridScreen(
                 photos = photos,
                 onPhotoClick = { viewModel.selectPhoto(it) },
+                onPhotoZoom = { photo ->
+                    // Activer le mode plein écran avec l'index de la photo
+                    val index = viewModel.getPhotoIndex(photo)
+                    if (index != -1) {
+                        viewModel.setFullscreenPhotoIndex(index)
+                        viewModel.setFullscreenMode(true)
+                    }
+                },
                 showImages = showImages,
                 modifier = Modifier.padding(paddingValues)
             )
