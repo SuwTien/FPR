@@ -102,7 +102,8 @@ fun MainScreen(
                 viewModel.clearSelectedPhoto()
                 result
             },
-            viewModel = viewModel
+            viewModel = viewModel,
+            startInRenamingMode = true // Activer le mode renommage direct
         )
     } else {
         Scaffold(

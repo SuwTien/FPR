@@ -49,7 +49,8 @@ fun PhotoDetailScreen(
     onBack: () -> Unit,
     onRename: (PhotoModel, String, Context) -> Boolean,
     onDelete: (PhotoModel, Context) -> Boolean,
-    viewModel: PhotosViewModel
+    viewModel: PhotosViewModel,
+    startInRenamingMode: Boolean = true // Paramètre ajouté pour démarrer en mode renommage
 ) {
     val context = LocalContext.current
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -60,8 +61,8 @@ fun PhotoDetailScreen(
     var offsetX by remember { mutableStateOf(0f) }
     var offsetY by remember { mutableStateOf(0f) }
 
-    // État pour le mode de renommage
-    var isRenaming by remember { mutableStateOf(false) }
+    // État pour le mode de renommage - maintenant initialisé avec startInRenamingMode
+    var isRenaming by remember { mutableStateOf(startInRenamingMode) }
 
     // Extraire l'extension du fichier
     val extension = photo.name.substringAfterLast(".", "")
@@ -88,6 +89,14 @@ fun PhotoDetailScreen(
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    // Effet pour demander le focus automatiquement si on démarre en mode renommage
+    LaunchedEffect(Unit) {
+        if (startInRenamingMode) {
+            delay(100)
+            focusRequester.requestFocus()
+        }
+    }
+
     // Vérifier si le nom existe chaque fois que le texte change
     LaunchedEffect(textFieldValue.text) {
         if (isRenaming) {
@@ -109,19 +118,10 @@ fun PhotoDetailScreen(
                          textFieldValue.text != nameWithoutExtension && 
                          !nameAlreadyExists && !isRenameInProgress
 
-    // BackHandler général pour retourner à l'écran principal
+    // BackHandler général pour retourner à l'écran principal directement
     BackHandler {
-        if (isRenaming) {
-            // Si on est en mode renommage, d'abord sortir du mode
-            isRenaming = false
-            textFieldValue = TextFieldValue(
-                text = nameWithoutExtension,
-                selection = TextRange(0, nameWithoutExtension.length)
-            )
-        } else {
-            // Sinon, retourner à l'écran principal
-            onBack()
-        }
+        // Revenir directement à l'écran principal sans passer par le mode visualisation
+        onBack()
     }
 
     Scaffold(
