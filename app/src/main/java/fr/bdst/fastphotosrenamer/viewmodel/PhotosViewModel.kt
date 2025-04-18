@@ -419,6 +419,15 @@ class PhotosViewModel : ViewModel() {
     }
     
     fun selectPhoto(photo: PhotoModel) {
+        android.util.Log.d("FPR_DEBUG", "Photo sélectionnée: ${photo.name}, path: ${photo.path}")
+        
+        // Si une photo différente est déjà sélectionnée, l'afficher dans les logs
+        _selectedPhoto.value?.let { current ->
+            if (current.path != photo.path) {
+                android.util.Log.d("FPR_DEBUG", "Photo différente de la sélection précédente: ${current.name}")
+            }
+        }
+        
         _selectedPhoto.value = photo
     }
     
@@ -927,8 +936,9 @@ class PhotosViewModel : ViewModel() {
     fun setFullscreenPhotoIndex(index: Int) {
         if (index >= 0 && index < _photos.value.size) {
             _fullscreenPhotoIndex.value = index
-            // Mettre également à jour la photo sélectionnée pour la cohérence
-            _selectedPhoto.value = _photos.value[index]
+            // Ne pas mettre à jour la photo sélectionnée, pour éviter la confusion
+            // lors de la sélection dans la grille après navigation en plein écran
+            // _selectedPhoto.value = _photos.value[index]  // Cette ligne est commentée pour corriger le bug
         }
     }
     
