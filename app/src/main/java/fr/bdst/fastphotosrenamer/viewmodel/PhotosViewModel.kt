@@ -96,11 +96,20 @@ class PhotosViewModel : ViewModel() {
         viewModelScope.launch {
             _isLoading.value = true
             
+            // Sauvegarder l'index de la photo en plein écran avant de charger les nouvelles photos
+            val savedFullscreenIndex = _fullscreenPhotoIndex.value
+            
             // Si c'est le dossier DCIM/Camera, utilise la méthode spéciale
             if (folderPath.endsWith("/DCIM/Camera")) {
                 _photos.value = getCameraPhotos(context)
             } else {
                 _photos.value = loadPhotosFromFolderSync(context, folderPath)
+            }
+
+            // Mettre à jour la photo sélectionnée même en mode plein écran
+            if (_fullscreenMode.value && savedFullscreenIndex < _photos.value.size) {
+                // Si on est en mode plein écran, essayer de restaurer l'index
+                _fullscreenPhotoIndex.value = savedFullscreenIndex
             }
             
             _isLoading.value = false

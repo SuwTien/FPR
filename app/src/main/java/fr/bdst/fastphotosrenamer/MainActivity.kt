@@ -29,6 +29,9 @@ import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
     private val viewModel: PhotosViewModel by viewModels()
+    
+    // Variable pour savoir si l'activité est créée pour la première fois ou après une rotation
+    private var isInitialCreation = true
 
     companion object {
         const val APP_FOLDER_NAME = "FPR"
@@ -100,9 +103,18 @@ class MainActivity : ComponentActivity() {
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        checkAndRequestAllPermissions()
         
-        // Utiliser l'approche traditionnelle - l'application respecte les limites des barres
+        // Déterminer si c'est une recréation après rotation
+        isInitialCreation = savedInstanceState == null
+        
+        // On n'initialise les dossiers et permissions que lors de la première création
+        if (isInitialCreation) {
+            checkAndRequestAllPermissions()
+        } else {
+            // En cas de recréation, on s'assure juste que les dossiers existent
+            // sans changer le dossier courant
+            ensureAppFolderExistsWithoutChangingCurrentFolder()
+        }
         
         // Détection du thème sombre via une méthode non-Compose
         val isDarkTheme = resources.configuration.uiMode and 
@@ -111,11 +123,10 @@ class MainActivity : ComponentActivity() {
         
         // Configurer les icônes de la barre d'état
         WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = !isDarkTheme  // Utiliser la variable locale à la place
+            isAppearanceLightStatusBars = !isDarkTheme
         }
         
         setContent {
-            // Simplifier cette partie aussi - supprimer SystemUiController
             FastPhotosRenamerTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
@@ -128,6 +139,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+    
+    // Sauvegarder l'état lors d'une rotation
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Nous n'avons pas besoin de sauvegarder des données supplémentaires ici,
+        // le simple fait que onSaveInstanceState soit appelé indique une recréation
     }
     
     private fun checkAndRequestAllPermissions() {
@@ -228,12 +246,19 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         
-        // Vérifier également que notre dossier existe à chaque reprise
-        ensureAppFolderExists()
+        // Vérifier l'existence des dossiers sans changer le dossier courant
+        ensureAppFolderExistsWithoutChangingCurrentFolder()
         
         // Recharger les photos uniquement si les permissions sont accordées
         if (areMediaPermissionsGranted()) {
-            viewModel.loadPhotos(this)
+            // Au lieu de charger DCIM/Camera par défaut, on charge le dossier actuellement sélectionné
+            val currentFolder = viewModel.currentFolder.value
+            if (currentFolder.isNotEmpty()) {
+                viewModel.loadPhotosFromFolder(this, currentFolder)
+            } else {
+                // Seulement si aucun dossier n'est sélectionné, on charge le dossier par défaut
+                viewModel.loadPhotos(this)
+            }
         }
     }
     
@@ -277,6 +302,25 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {
                 // Gestion des erreurs
+            }
+        }
+    }
+
+    // Méthode pour vérifier l'existence des dossiers sans changer le dossier courant
+    private fun ensureAppFolderExistsWithoutChangingCurrentFolder() {
+        if (areMediaPermissionsGranted()) {
+            try {
+                // S'assurer que le dossier FPR existe (pour l'organisation)
+                val dcimFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
+                val appFolder = File(dcimFolder, APP_FOLDER_NAME)
+                
+                if (!appFolder.exists()) {
+                    appFolder.mkdir()
+                }
+                
+                // Ne pas modifier le dossier courant ici, contrairement à ensureAppFolderExists
+            } catch (e: Exception) {
+                // Gestion silencieuse des erreurs
             }
         }
     }
