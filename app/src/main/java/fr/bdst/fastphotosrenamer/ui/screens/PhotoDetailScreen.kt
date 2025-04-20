@@ -9,9 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -19,7 +17,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -30,27 +27,24 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import fr.bdst.fastphotosrenamer.model.PhotoModel
 import fr.bdst.fastphotosrenamer.viewmodel.PhotosViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
-import androidx.compose.ui.platform.LocalDensity
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotoDetailScreen(
-    photo: PhotoModel,
+    // Nouvelle signature : Liste de photos + index au lieu d'une photo unique
+    photos: List<PhotoModel>,
+    photoIndex: Int,
     onBack: () -> Unit,
     onRename: (PhotoModel, String, Context) -> Boolean,
     onDelete: (PhotoModel, Context) -> Boolean,
     viewModel: PhotosViewModel,
-    startInRenamingMode: Boolean = true // Paramètre ajouté pour démarrer en mode renommage
+    startInRenamingMode: Boolean = true
 ) {
     val context = LocalContext.current
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -61,13 +55,28 @@ fun PhotoDetailScreen(
     var offsetX by remember { mutableStateOf(0f) }
     var offsetY by remember { mutableStateOf(0f) }
 
-    // État pour le mode de renommage - maintenant initialisé avec startInRenamingMode
+    // État pour le mode de renommage
     var isRenaming by remember { mutableStateOf(startInRenamingMode) }
 
+    // Obtenir la photo actuelle à partir de la liste et de l'index
+    val currentPhotoIndex by remember { mutableStateOf(photoIndex) }
+    
+    // Protection contre les index hors limites
+    if (currentPhotoIndex < 0 || currentPhotoIndex >= photos.size || photos.isEmpty()) {
+        // Si l'index est invalide, revenir en arrière
+        LaunchedEffect(Unit) {
+            onBack()
+        }
+        return
+    }
+
+    // Obtenir la photo actuelle à partir de l'index
+    val currentPhoto = photos[currentPhotoIndex]
+    
     // Extraire l'extension du fichier
-    val extension = photo.name.substringAfterLast(".", "")
+    val extension = currentPhoto.name.substringAfterLast(".", "")
     // Extraire le nom sans extension pour l'affichage
-    val nameWithoutExtension = photo.name.substringBeforeLast(".", photo.name)
+    val nameWithoutExtension = currentPhoto.name.substringBeforeLast(".", currentPhoto.name)
 
     // Utiliser TextFieldValue pour gérer la sélection du texte
     var textFieldValue by remember { 
@@ -106,7 +115,7 @@ fun PhotoDetailScreen(
                 textFieldValue.text
             }
 
-            nameAlreadyExists = viewModel.checkIfNameExists(photo.path, newFullName)
+            nameAlreadyExists = viewModel.checkIfNameExists(currentPhoto.path, newFullName)
         }
     }
 
@@ -120,7 +129,7 @@ fun PhotoDetailScreen(
 
     // BackHandler général pour retourner à l'écran principal directement
     BackHandler {
-        // Revenir directement à l'écran principal sans passer par le mode visualisation
+        // Revenir directement à l'écran principal
         onBack()
     }
 
@@ -184,7 +193,7 @@ fun PhotoDetailScreen(
                                             textFieldValue.text
                                         }
                                         keyboardController?.hide()
-                                        val success = onRename(photo, newFullName, context)
+                                        val success = onRename(currentPhoto, newFullName, context)
                                         if (success) {
                                             isRenaming = false
                                             coroutineScope.launch {
@@ -266,7 +275,7 @@ fun PhotoDetailScreen(
                                         textFieldValue.text
                                     }
                                     keyboardController?.hide()
-                                    val success = onRename(photo, newFullName, context)
+                                    val success = onRename(currentPhoto, newFullName, context)
                                     if (success) {
                                         isRenaming = false
                                         coroutineScope.launch {
@@ -340,10 +349,10 @@ fun PhotoDetailScreen(
             // Image zoomable
             SubcomposeAsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
-                    .data(photo.uri)
+                    .data(currentPhoto.uri)
                     .crossfade(true)
                     .build(),
-                contentDescription = photo.name,
+                contentDescription = currentPhoto.name,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
@@ -390,7 +399,7 @@ fun PhotoDetailScreen(
         DeleteConfirmationDialog(
             onDismiss = { showDeleteDialog = false },
             onConfirm = { 
-                val success = onDelete(photo, context)
+                val success = onDelete(currentPhoto, context)
                 if (success) {
                     showDeleteDialog = false
                 }

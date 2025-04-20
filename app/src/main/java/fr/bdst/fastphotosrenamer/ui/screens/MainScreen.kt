@@ -120,37 +120,48 @@ fun MainScreen(
     }
     // Mode détail d'une photo sélectionnée
     else if (selectedPhoto != null) {
-        PhotoDetailScreen(
-            photo = selectedPhoto!!,
-            onBack = { 
-                // Si on vient du mode plein écran, y retourner après renommage
-                if (viewModel.wasInFullscreenMode) {
+        // Utiliser la nouvelle approche par index au lieu de la référence directe
+        val photoIndex = viewModel.getPhotoIndex(selectedPhoto!!)
+        
+        // Vérifier que l'index est valide avant de continuer
+        if (photoIndex != -1 && photos.isNotEmpty()) {
+            PhotoDetailScreen(
+                // Passage de la liste complète des photos et l'index
+                photos = photos,
+                photoIndex = photoIndex,
+                onBack = { 
+                    // Si on vient du mode plein écran, y retourner après renommage
+                    if (viewModel.wasInFullscreenMode) {
+                        viewModel.clearSelectedPhoto()
+                        viewModel.setFullscreenMode(true)
+                        viewModel.resetWasInFullscreenMode()
+                    } else {
+                        // Comportement normal : retour à la grille
+                        viewModel.clearSelectedPhoto()
+                    }
+                },
+                onRename = { photo, newName, ctx ->
+                    val result = viewModel.renamePhoto(ctx, photo, newName)
+                    // Si on vient du mode plein écran, retourner en mode plein écran après le renommage
+                    if (viewModel.wasInFullscreenMode) {
+                        viewModel.clearSelectedPhoto()
+                        viewModel.setFullscreenMode(true)
+                        viewModel.resetWasInFullscreenMode()
+                    }
+                    result
+                },
+                onDelete = { photo, ctx ->
+                    val result = viewModel.deletePhoto(ctx, photo)
                     viewModel.clearSelectedPhoto()
-                    viewModel.setFullscreenMode(true)
-                    viewModel.resetWasInFullscreenMode()
-                } else {
-                    // Comportement normal : retour à la grille
-                    viewModel.clearSelectedPhoto()
-                }
-            },
-            onRename = { photo, newName, ctx ->
-                val result = viewModel.renamePhoto(ctx, photo, newName)
-                // Si on vient du mode plein écran, retourner en mode plein écran après le renommage
-                if (viewModel.wasInFullscreenMode) {
-                    viewModel.clearSelectedPhoto()
-                    viewModel.setFullscreenMode(true)
-                    viewModel.resetWasInFullscreenMode()
-                }
-                result
-            },
-            onDelete = { photo, ctx ->
-                val result = viewModel.deletePhoto(ctx, photo)
-                viewModel.clearSelectedPhoto()
-                result
-            },
-            viewModel = viewModel,
-            startInRenamingMode = true // Activer le mode renommage direct
-        )
+                    result
+                },
+                viewModel = viewModel,
+                startInRenamingMode = true // Activer le mode renommage direct
+            )
+        } else {
+            // Si l'index est invalide, revenir à la grille
+            viewModel.clearSelectedPhoto()
+        }
     } 
     // Mode grille normal
     else {
