@@ -8,6 +8,9 @@ import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.SdStorage
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -19,6 +22,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.surfaceColorAtElevation
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,21 +37,30 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import fr.bdst.fastphotosrenamer.viewmodel.PhotosViewModel
+import fr.bdst.fastphotosrenamer.ui.components.FolderPickerDialog
+import fr.bdst.fastphotosrenamer.ui.components.CreateFolderDialog
+import fr.bdst.fastphotosrenamer.ui.components.AboutMenuButton
+import fr.bdst.fastphotosrenamer.ui.components.FunctionalityDialog
+import fr.bdst.fastphotosrenamer.ui.components.LicenseDialog
+import fr.bdst.fastphotosrenamer.ui.components.CreditsDialog
+import fr.bdst.fastphotosrenamer.ui.components.FullLicenseDialog
+import android.content.pm.PackageManager
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
-import androidx.compose.ui.Alignment
-import fr.bdst.fastphotosrenamer.ui.components.FolderPickerDialog
-import fr.bdst.fastphotosrenamer.ui.components.CreateFolderDialog
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ElevatedButton
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.navigationBars
@@ -51,6 +69,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ElevatedButton
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,6 +93,13 @@ fun MainScreen(
     var showImages by remember { mutableStateOf(true) }
     var showFolderPicker by remember { mutableStateOf(false) }
     var showCreateFolderDialog by remember { mutableStateOf(false) }
+    
+    // Nouveaux états pour le menu "À propos"
+    var showAboutMenu by remember { mutableStateOf(false) }
+    var showFunctionalityDialog by remember { mutableStateOf(false) }
+    var showLicenseDialog by remember { mutableStateOf(false) }
+    var showCreditsDialog by remember { mutableStateOf(false) }
+    var showFullLicenseDialog by remember { mutableStateOf(false) } // Nouvel état pour la licence complète
     
     // Effet pour charger les photos une seule fois au démarrage
     LaunchedEffect(Unit) {
@@ -217,11 +244,19 @@ fun MainScreen(
                                         contentDescription = null,
                                         modifier = Modifier.padding(start = 8.dp)
                                     )
-                                    
-                                    // Supprimer le Spacer qui causait le déséquilibre
                                 }
                             }
                         }
+                    },
+                    actions = {
+                        // Bouton avec les trois points pour le menu "À propos"
+                        AboutMenuButton(
+                            showAboutMenu = showAboutMenu,
+                            onShowAboutMenuChange = { showAboutMenu = it },
+                            onShowFunctionalityDialog = { showFunctionalityDialog = true },
+                            onShowLicenseDialog = { showLicenseDialog = true },
+                            onShowCreditsDialog = { showCreditsDialog = true }
+                        )
                     }
                 )
             },
@@ -269,7 +304,7 @@ fun MainScreen(
         FolderPickerDialog(
             currentFolder = currentFolder,
             availableFolders = availableFolders,
-            onFolderSelected = { folder ->
+            onFolderSelected = { folder -> 
                 viewModel.setCurrentFolder(folder)
                 showFolderPicker = false
             },
@@ -290,10 +325,44 @@ fun MainScreen(
     if (showCreateFolderDialog) {
         CreateFolderDialog(
             onDismiss = { showCreateFolderDialog = false },
-            onConfirm = { folderName ->
+            onConfirm = { folderName -> 
                 viewModel.createNewFolder(context, folderName)
                 showCreateFolderDialog = false
             }
+        )
+    }
+    
+    // Dialogues du menu "À propos"
+    
+    // Dialogue Fonctionnement
+    if (showFunctionalityDialog) {
+        FunctionalityDialog(
+            onDismiss = { showFunctionalityDialog = false }
+        )
+    }
+    
+    // Dialogue Licence
+    if (showLicenseDialog) {
+        LicenseDialog(
+            onDismiss = { showLicenseDialog = false },
+            onShowFullLicense = { 
+                showLicenseDialog = false  // Fermer le dialogue de licence standard
+                showFullLicenseDialog = true  // Ouvrir le dialogue de licence complète
+            }
+        )
+    }
+    
+    // Dialogue de licence complète
+    if (showFullLicenseDialog) {
+        FullLicenseDialog(
+            onDismiss = { showFullLicenseDialog = false }
+        )
+    }
+    
+    // Dialogue Crédits
+    if (showCreditsDialog) {
+        CreditsDialog(
+            onDismiss = { showCreditsDialog = false }
         )
     }
 }
