@@ -18,7 +18,19 @@ Le code actuel présente plusieurs opportunités d'amélioration :
 
 ### Phase 2 : Séparation des responsabilités
 - **Extraction du gestionnaire de photos** : Sortir la logique de chargement et de pagination des photos dans une classe `PhotoManager`
+  - *Étape 2.1* : Créer `PhotoPaginator` pour la pagination des photos ✓
+  - *Étape 2.2* : Étendre les fonctionnalités vers un `PhotoManager` complet ✓
+    - Déplacer les fonctions de chargement des photos ✓
+    - Déplacer les fonctions de renommage et de suppression ✓
+    - Déplacer les fonctions d'import/export ✓
+  - *Étape 2.3* : Supprimer la classe `PhotoPaginator` désormais obsolète
 - **Extraction du gestionnaire de dossiers** : Sortir la logique de gestion des dossiers dans une classe `FolderManager`
+  - *Étape 2.4* : Créer la classe `FolderManager`
+    - Déplacer les fonctions de chargement des dossiers
+    - Déplacer les fonctions de création des dossiers
+    - Déplacer les fonctions de vérification et de navigation
+  - *Étape 2.5* : Adapter le `PhotosViewModel` pour utiliser ces nouvelles classes
+  - *Étape 2.6* : Tests et validation des modifications
 
 ### Phase 3 : Architecture améliorée
 - **Implémentation du Repository Pattern** : Créer une couche d'abstraction `PhotoRepository` pour l'accès aux données
@@ -31,7 +43,13 @@ Le code actuel présente plusieurs opportunités d'amélioration :
 ## État d'avancement
 
 - [x] Début du plan : 21 avril 2025
-- [ ] Phase 1 complétée
+- [x] Phase 1 complétée
 - [ ] Phase 2 complétée  
+  - [x] Étape 2.1 : Création de `PhotoPaginator` pour la pagination
+  - [x] Étape 2.2 : Extension vers `PhotoManager` complet
+  - [ ] Étape 2.3 : Suppression de `PhotoPaginator` (obsolète)
+  - [ ] Étape 2.4 : Création de `FolderManager`
+  - [ ] Étape 2.5 : Adaptation du `PhotosViewModel`
+  - [ ] Étape 2.6 : Tests et validation
 - [ ] Phase 3 complétée
 - [ ] Phase 4 complétée

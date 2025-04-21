@@ -1,35 +1,24 @@
 package fr.bdst.fastphotosrenamer.viewmodel
 
 import android.app.Activity
-import android.content.ContentResolver
-import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.bdst.fastphotosrenamer.model.PhotoModel
+import fr.bdst.fastphotosrenamer.storage.PhotoManager
+import fr.bdst.fastphotosrenamer.storage.PhotoRenamer
 import fr.bdst.fastphotosrenamer.utils.FilePathUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.io.File
-import android.Manifest
-import androidx.core.content.ContextCompat
-import android.content.pm.PackageManager
-import fr.bdst.fastphotosrenamer.storage.PhotoRenamer
-import android.content.ContentUris
-import java.nio.file.Files
-import java.nio.file.attribute.FileTime
-import java.io.InputStream
-import java.io.OutputStream
 
 class PhotosViewModel : ViewModel() {
     
@@ -39,8 +28,8 @@ class PhotosViewModel : ViewModel() {
     private val _selectedPhoto = MutableStateFlow<PhotoModel?>(null)
     val selectedPhoto: StateFlow<PhotoModel?> = _selectedPhoto
 
-    private val _isRenameOperationInProgress = MutableStateFlow(false)
-    val isRenameOperationInProgress: StateFlow<Boolean> = _isRenameOperationInProgress
+    // Accès à l'état du PhotoManager
+    val isRenameOperationInProgress = PhotoManager.isRenameOperationInProgress
 
     // Variables d'état pour les dossiers
     private val _currentFolder = MutableStateFlow<String>("")
@@ -111,14 +100,14 @@ class PhotosViewModel : ViewModel() {
                 val savedFullscreenIndex = _fullscreenPhotoIndex.value
                 
                 // Calculer l'offset pour le chargement paginé
-                val offset = _currentPage.value * fr.bdst.fastphotosrenamer.utils.PhotoPaginator.PAGE_SIZE
+                val offset = _currentPage.value * PhotoManager.PAGE_SIZE
                 
-                // Charger une page de photos
-                val (newPhotos, hasMore) = fr.bdst.fastphotosrenamer.utils.PhotoPaginator.loadPhotosPageFromFolder(
+                // Charger une page de photos en utilisant PhotoManager
+                val (newPhotos, hasMore) = PhotoManager.loadPhotosPageFromFolder(
                     context,
                     folderPath,
                     offset,
-                    fr.bdst.fastphotosrenamer.utils.PhotoPaginator.PAGE_SIZE
+                    PhotoManager.PAGE_SIZE
                 )
                 
                 // Mettre à jour l'état
@@ -164,7 +153,7 @@ class PhotosViewModel : ViewModel() {
         loadPhotosFromFolderPaginated(context, _currentFolder.value, false)
     }
 
-    // Remplacer la méthode originale par la version paginée
+    // Remplacer la méthode originale par la version utilisant PhotoManager
     fun loadPhotosFromFolder(context: Context, folderPath: String) {
         // Réinitialiser et charger la première page
         loadPhotosFromFolderPaginated(context, folderPath, true)
@@ -281,41 +270,26 @@ class PhotosViewModel : ViewModel() {
     
     // FONCTION 1: Chargement des photos selon le contexte (dossier spécifique ou DCIM/Camera)
     fun loadPhotos(context: Context) {
-        val cameraFolderPath = FilePathUtils.getCameraFolderPath()
-        val cameraFolder = File(cameraFolderPath)
-        
-        // Si un dossier spécifique est sélectionné
-        if (_currentFolder.value.isNotEmpty()) {
-            // Cas spécial pour DCIM/Camera (utiliser le chemin exact au lieu de la sélection)
-            if (FilePathUtils.isCameraFolder(_currentFolder.value)) {
-                android.util.Log.d("FPR_DEBUG", "Chargement spécifique DCIM/Camera")
-                loadPhotosFromFolder(context, cameraFolderPath)
-                return
-            }
+        viewModelScope.launch {
+            _isLoading.value = true
+            _photos.value = emptyList() // Vider la liste actuelle
+            _currentPage.value = 0 // Réinitialiser la pagination
             
-            // Pour les autres dossiers
-            loadPhotosFromFolder(context, _currentFolder.value)
-            return
-        }
-        
-        // Par défaut, charger DCIM/Camera
-        if (cameraFolder.exists() && cameraFolder.isDirectory) {
-            android.util.Log.d("FPR_DEBUG", "Chargement par défaut DCIM/Camera")
-            loadPhotosFromFolder(context, cameraFolderPath)
-            return
-        }
-        
-        // Fallback au dossier de l'application si DCIM/Camera n'existe pas
-        val appFolderPath = FilePathUtils.getAppFolderPath()
-        val appFolder = File(appFolderPath)
-        if (appFolder.exists() && appFolder.isDirectory) {
-            loadPhotosFromFolder(context, appFolderPath)
-        } else {
-            // Créer le dossier s'il n'existe pas
-            if (!appFolder.exists()) {
-                appFolder.mkdirs()
+            try {
+                // Utiliser PhotoManager pour charger les photos
+                val (loadedPhotos, hasMore) = PhotoManager.loadPhotos(context, _currentFolder.value)
+                
+                _photos.value = loadedPhotos
+                _hasMorePhotos.value = hasMore
+                
+                if (hasMore) {
+                    _currentPage.value = 1 // Première page chargée
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("FPR_DEBUG", "Erreur lors du chargement des photos: ${e.message}")
+            } finally {
+                _isLoading.value = false
             }
-            loadPhotosFromFolder(context, appFolderPath)
         }
     }
     
@@ -353,6 +327,7 @@ class PhotosViewModel : ViewModel() {
         }
     }
     
+    // Utiliser PhotoManager pour renommer la photo
     fun renamePhoto(context: Context, photo: PhotoModel, newName: String): Boolean {
         // Créer un callback pour gérer les événements de renommage
         val callback = object : PhotoRenamer.RenameCallback {
@@ -361,7 +336,7 @@ class PhotosViewModel : ViewModel() {
             }
             
             override fun onRenameInProgress(inProgress: Boolean) {
-                _isRenameOperationInProgress.value = inProgress
+                // Non nécessaire de gérer ici, le PhotoManager s'en occupe
             }
             
             override fun onRenameComplete(reloadPhotos: Boolean) {
@@ -374,114 +349,24 @@ class PhotosViewModel : ViewModel() {
             }
         }
         
-        return PhotoRenamer.renamePhoto(context, photo, newName, callback)
+        return PhotoManager.renamePhoto(context, photo, newName, callback)
     }
     
+    // Utiliser PhotoManager pour supprimer la photo
     fun deletePhoto(context: Context, photo: PhotoModel): Boolean {
-        // Vérifier d'abord si on a la permission complète
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                Toast.makeText(context, "L'accès à tous les fichiers est nécessaire pour supprimer", Toast.LENGTH_LONG).show()
-                
-                // Rediriger vers les paramètres
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                val uri = Uri.fromParts("package", context.packageName, null)
-                intent.data = uri
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                
-                context.startActivity(intent)
-                return false
-            }
-        }
-        else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) 
-                    != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(context, "Permission d'écriture requise pour supprimer les fichiers", Toast.LENGTH_LONG).show()
-                
-                // Redirection vers paramètres pour Android 8.0
-                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.O) {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                    intent.data = Uri.fromParts("package", context.packageName, null)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(intent)
-                }
-                return false
+        val success = PhotoManager.deletePhoto(context, photo)
+        
+        if (success) {
+            viewModelScope.launch {
+                delay(500)
+                loadPhotos(context)
             }
         }
         
-        return try {
-            var success = false
-            
-            // Essai 1: Suppression directe du fichier
-            try {
-                if (photo.file.exists() && photo.file.delete()) {
-                    // Si suppression du fichier réussit, notifier le système
-                    context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(photo.file)))
-                    
-                    try {
-                        // Supprimer l'entrée MediaStore
-                        context.contentResolver.delete(photo.uri, null, null)
-                    } catch (e: Exception) {
-                        // Ignorer l'erreur MediaStore si la suppression de fichier a réussi
-                        e.printStackTrace()
-                    }
-                    
-                    success = true
-                    viewModelScope.launch {
-                        delay(500)
-                        loadPhotos(context)
-                    }
-                    return true
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            
-            // Méthode spécifique pour Android 8.0
-            if (Build.VERSION.SDK_INT == Build.VERSION_CODES.O && !success) {
-                try {
-                    // Essayer de supprimer via ContentResolver mais préserver l'URI
-                    val uriBackup = photo.uri
-                    val deletedRows = context.contentResolver.delete(photo.uri, null, null)
-                    
-                    if (deletedRows > 0) {
-                        // Forcer une mise à jour du système
-                        context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, uriBackup))
-                        
-                        viewModelScope.launch {
-                            delay(500)
-                            loadPhotos(context)
-                        }
-                        return true
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-            
-            // Essai 3: Méthode standard MediaStore
-            val deletedRows = context.contentResolver.delete(photo.uri, null, null)
-            
-            if (deletedRows > 0) {
-                viewModelScope.launch {
-                    delay(300)
-                    loadPhotos(context)
-                }
-                return true
-            } else {
-                // Message d'erreur pour debug
-                Toast.makeText(context, "Échec de la suppression via MediaStore: URI=${photo.uri}", Toast.LENGTH_LONG).show()
-                return false
-            }
-        } catch (e: Exception) {
-            // Message d'erreur pour debug
-            Toast.makeText(context, "Exception lors de la suppression: ${e.message}", Toast.LENGTH_SHORT).show()
-            e.printStackTrace()
-            return false
-        }
+        return success
     }
     
-    // Nouvelle méthode pour lancer l'appareil photo
+    // Utiliser Activity pour lancer l'appareil photo
     fun launchCamera(activity: Activity, cameraLauncher: ActivityResultLauncher<Intent>) {
         // Utiliser INTENT_ACTION_STILL_IMAGE_CAMERA au lieu de ACTION_IMAGE_CAPTURE
         // Cela ouvre l'appareil photo en mode normal et permet de prendre plusieurs photos
@@ -494,304 +379,50 @@ class PhotosViewModel : ViewModel() {
         }
     }
 
+    // Déléguer la vérification du nom au PhotoManager
     fun checkIfNameExists(currentPhotoPath: String, newFullName: String): Boolean {
-        val parentPath = FilePathUtils.getParentFolderPath(currentPhotoPath) ?: return false
-        return FilePathUtils.fileNameExistsInFolder(parentPath, newFullName)
+        return PhotoManager.checkIfNameExists(currentPhotoPath, newFullName)
     }
 
+    // Utiliser PhotoManager pour importer des photos depuis le dossier Camera
     fun importPhotosFromCamera(context: Context) {
         viewModelScope.launch {
-            try {
-                val cameraFolderPath = FilePathUtils.getCameraFolderPath()
-                val cameraFolder = File(cameraFolderPath)
-                
-                val workingDir = File(_currentFolder.value)
-                if (!workingDir.exists()) {
-                    Toast.makeText(context, "Le dossier de destination n'existe pas", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                
-                // Récupérer toutes les photos du dossier Camera
-                val cameraPhotos = cameraFolder.listFiles { file -> 
-                    file.isFile && 
-                    FilePathUtils.isImageFile(file.name) && 
-                    !FilePathUtils.isTrashFile(file.name)
-                } ?: emptyArray()
-                
-                if (cameraPhotos.isEmpty()) {
-                    Toast.makeText(context, "Aucune photo à importer", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                
-                var imported = 0
-                var skipped = 0
-                
-                // Copier chaque photo dans le dossier de travail
-                for (photo in cameraPhotos) {
-                    val destFile = File(workingDir, photo.name)
-                    
-                    if (destFile.exists()) {
-                        // Si déjà existant, ajout d'un suffixe
-                        val baseName = photo.name.substringBeforeLast(".", "")
-                        val extension = photo.name.substringAfterLast(".", "")
-                        val newName = "${baseName}_${System.currentTimeMillis()}.${extension}"
-                        val destFileUnique = File(workingDir, newName)
-                        
-                        try {
-                            // Conserver la date originale
-                            val originalLastModified = photo.lastModified()
-                            
-                            // Copier avec gestion des métadonnées
-                            val input: InputStream = photo.inputStream()
-                            val output: OutputStream = destFileUnique.outputStream()
-                            input.use { inStream -> 
-                                output.use { outStream ->
-                                    inStream.copyTo(outStream)
-                                }
-                            }
-                            
-                            // Restaurer la date
-                            destFileUnique.setLastModified(originalLastModified)
-                            
-                            imported++
-                        } catch (e: Exception) {
-                            skipped++
-                        }
-                    } else {
-                        try {
-                            // Conserver la date originale
-                            val originalLastModified = photo.lastModified()
-                            
-                            // Copier avec gestion des métadonnées
-                            val input: InputStream = photo.inputStream()
-                            val output: OutputStream = destFile.outputStream()
-                            input.use { inStream -> 
-                                output.use { outStream ->
-                                    inStream.copyTo(outStream)
-                                }
-                            }
-                            
-                            // Restaurer la date
-                            destFile.setLastModified(originalLastModified)
-                            
-                            imported++
-                        } catch (e: Exception) {
-                            skipped++
-                        }
-                    }
-                }
-                
-                // Afficher un message récapitulatif
+            PhotoManager.importPhotosFromCamera(context, _currentFolder.value) { imported, skipped -> 
                 if (imported > 0) {
-                    Toast.makeText(
-                        context, 
-                        "$imported photos importées${if (skipped > 0) ", $skipped ignorées" else ""}", 
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    
                     // Rafraîchir la liste des photos
                     loadPhotosFromFolder(context, _currentFolder.value)
-                } else {
-                    Toast.makeText(context, "Aucune photo importée", Toast.LENGTH_SHORT).show()
                 }
-                
-            } catch (e: Exception) {
-                Toast.makeText(context, "Erreur: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // Fonction pour déplacer les photos entre dossiers
+    // Utiliser PhotoManager pour déplacer des photos entre dossiers
     fun movePhotosFromCamera(context: Context, sourceFolder: String, destinationFolder: String) {
         viewModelScope.launch {
-            var moved = 0
-            var skipped = 0
-            var failed = 0
-            try {
-                val sourceDir = File(sourceFolder)
-                val destinationDir = File(destinationFolder)
-                
-                if (!sourceDir.exists() || !destinationDir.exists()) {
-                    Toast.makeText(context, "Dossier source ou destination invalide", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                
-                // Récupérer la liste des photos du dossier source
-                val sourcePhotos = sourceDir.listFiles { file -> 
-                    file.isFile && FilePathUtils.isImageFile(file.name) && !FilePathUtils.isTrashFile(file.name)
-                } ?: emptyArray()
-                
-                // Pour chaque photo
-                for (photo in sourcePhotos) {
-                    val destFile = File(destinationDir, photo.name)
-                    
-                    if (destFile.exists()) {
-                        skipped++
-                        continue
+            // Déplacer les photos et obtenir les résultats
+            val (moved, skipped, failed) = PhotoManager.movePhotosFromFolder(context, sourceFolder, destinationFolder) { _, _, _ -> 
+                // Déterminer quel dossier doit être rafraîchi
+                when (_currentFolder.value) {
+                    sourceFolder -> {
+                        // Si on affiche le dossier source, le rafraîchir
+                        loadPhotosFromFolder(context, sourceFolder)
                     }
-                    
-                    try {
-                        // NOUVELLE APPROCHE: Essayer d'abord un renommage direct
-                        var success = photo.renameTo(destFile)
-                        
-                        // Si le premier essai échoue, attendre un peu et réessayer
-                        if (!success) {
-                            delay(200) // Attendre pour libérer d'éventuels verrous
-                            success = photo.renameTo(destFile)
-                        }
-                        
-                        // Si le renommage direct réussit (meilleure préservation des métadonnées)
-                        if (success) {
-                            moved++
-                            context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destFile)))
-                            continue // Passer à la photo suivante
-                        }
-                        
-                        // Si le renommage direct a échoué, fallback au copier-puis-supprimer
-                        
-                        // 1. Conserver l'horodatage et autres métadonnées importantes
-                        val originalLastModified = photo.lastModified()
-                        val originalLastAccessed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            Files.getAttribute(photo.toPath(), "lastAccessTime") as? FileTime
-                        } else null
-                        val originalCreationTime = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            Files.getAttribute(photo.toPath(), "creationTime") as? FileTime
-                        } else null
-                        
-                        // 2. Copier le fichier
-                        val input: InputStream = photo.inputStream()
-                            val output: OutputStream = destFile.outputStream()
-                            input.use { inStream -> 
-                                output.use { outStream ->
-                                    inStream.copyTo(outStream)
-                                }
-                            }
-                        
-                        // 3. Vérifier la copie et restaurer les métadonnées
-                        if (destFile.exists() && destFile.length() == photo.length()) {
-                            // Restaurer la date de dernière modification
-                            destFile.setLastModified(originalLastModified)
-                            
-                            // Restaurer les autres métadonnées si disponibles (API 26+)
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                try {
-                                    originalLastAccessed?.let {
-                                        Files.setAttribute(destFile.toPath(), "lastAccessTime", it)
-                                    }
-                                    originalCreationTime?.let {
-                                        Files.setAttribute(destFile.toPath(), "creationTime", it)
-                                    }
-                                } catch (e: Exception) {
-                                }
-                            }
-                            
-                            // 4. Supprimer l'original
-                            if (photo.delete()) {
-                                moved++
-                            } else {
-                                moved++ // On considère comme déplacé car l'utilisateur a la copie
-                            }
-                            
-                            // 5. Notifier MediaStore
-                            context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(destFile)))
-                            context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(photo)))
-                        } else {
-                            // Copie incomplète
-                            if (destFile.exists()) destFile.delete()
-                            failed++
-                        }
-                    } catch (e: Exception) {
-                        failed++
-                        if (destFile.exists()) destFile.delete()
+                    destinationFolder -> {
+                        // Si on affiche le dossier destination, le rafraîchir
+                        loadPhotosFromFolder(context, destinationFolder)
+                    }
+                    else -> {
+                        // Dans les autres cas, rafraîchir le dossier courant
+                        loadPhotosFromFolder(context, _currentFolder.value)
                     }
                 }
-                
-                // Message de résultat
-                if (moved > 0) {
-                    Toast.makeText(
-                        context,
-                        "$moved photos déplacées${if (skipped > 0) ", $skipped ignorées" else ""}${if (failed > 0) ", $failed échecs" else ""}",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    
-                    // Déterminer quel dossier doit être rafraîchi
-                    when (_currentFolder.value) {
-                        sourceFolder -> {
-                            // Si on affiche le dossier source, le rafraîchir
-                            loadPhotosFromFolder(context, sourceFolder)
-                        }
-                        destinationFolder -> {
-                            // Si on affiche le dossier destination, le rafraîchir
-                            loadPhotosFromFolder(context, destinationFolder)
-                        }
-                        else -> {
-                            // Dans les autres cas, rafraîchir le dossier courant
-                            loadPhotosFromFolder(context, _currentFolder.value)
-                        }
-                    }
-                } else {
-                    Toast.makeText(context, "Aucune photo déplacée", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Erreur: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+    // Utiliser PhotoManager pour obtenir les photos de l'appareil photo
     fun getCameraPhotos(context: Context): List<PhotoModel> {
-        val photosList = mutableListOf<PhotoModel>()
-        
-        try {
-            // Utilisation de MediaStore pour identifier spécifiquement les photos prises avec l'appareil
-            val projection = arrayOf(
-                MediaStore.Images.Media._ID,
-                MediaStore.Images.Media.DISPLAY_NAME,
-                MediaStore.Images.Media.DATA
-            )
-            
-            val selection = "${MediaStore.Images.Media.DATA} LIKE ?"
-            val selectionArgs = arrayOf("%DCIM/Camera/%")
-            val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
-            
-            context.contentResolver.query(
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                projection,
-                selection,
-                selectionArgs,
-                sortOrder
-            )?.use { cursor ->
-                val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-                val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
-                
-                while (cursor.moveToNext()) {
-                    val id = cursor.getLong(idColumn)
-                    val name = cursor.getString(nameColumn)
-                    val data = cursor.getString(dataColumn)
-                    
-                    // Ignorer les fichiers "trashed"
-                    if (FilePathUtils.isTrashFile(name)) continue
-                    
-                    // Vérifier que le fichier existe réellement
-                    val file = File(data)
-                    if (!file.exists() || file.length() == 0L) continue
-                    
-                    val contentUri = ContentUris.withAppendedId(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-                    
-                    photosList.add(PhotoModel(
-                        id = id.toString(),
-                        uri = contentUri,
-                        name = name,
-                        path = data,
-                        file = file
-                    ))
-                }
-            }
-        } catch (e: Exception) {
-        }
-        
-        return photosList
+        return PhotoManager.getCameraPhotos(context)
     }
     
     // Méthodes pour le mode plein écran
