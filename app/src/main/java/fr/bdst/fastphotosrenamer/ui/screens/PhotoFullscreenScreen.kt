@@ -232,7 +232,7 @@ fun PhotoFullscreenScreen(
         if (pagerState.currentPage > 0) {
             Box(
                 modifier = Modifier
-                    .width(80.dp)  // Largeur de bande fixe sur le côté gauche
+                    .width(40.dp)  // Largeur de bande réduite de moitié sur le côté gauche (80dp -> 40dp)
                     .fillMaxHeight()
                     .align(Alignment.CenterStart)
                     .clickable(indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {
@@ -268,7 +268,7 @@ fun PhotoFullscreenScreen(
         if (pagerState.currentPage < pagerState.pageCount - 1) {
             Box(
                 modifier = Modifier
-                    .width(80.dp)  // Largeur de bande fixe sur le côté droit
+                    .width(40.dp)  // Largeur de bande réduite de moitié sur le côté droit (80dp -> 40dp)
                     .fillMaxHeight()
                     .align(Alignment.CenterEnd)
                     .clickable(indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {
