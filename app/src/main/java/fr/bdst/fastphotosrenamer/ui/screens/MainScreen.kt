@@ -175,7 +175,7 @@ fun MainScreen(
                 photoIndex = photoIndex,
                 onBack = { 
                     // Si on vient du mode plein écran, y retourner après renommage
-                    if (viewModel.wasInFullscreenMode) {
+                    if (viewModel.wasInFullscreenMode.value) {
                         viewModel.clearSelectedPhoto()
                         viewModel.setFullscreenMode(true)
                         viewModel.resetWasInFullscreenMode()
@@ -185,14 +185,14 @@ fun MainScreen(
                     }
                 },
                 onRename = { photo, newName, ctx ->
-                    val result = viewModel.renamePhoto(ctx, photo, newName)
-                    // Si on vient du mode plein écran, retourner en mode plein écran après le renommage
-                    if (viewModel.wasInFullscreenMode) {
-                        viewModel.clearSelectedPhoto()
-                        viewModel.setFullscreenMode(true)
-                        viewModel.resetWasInFullscreenMode()
+                    viewModel.renamePhoto(ctx, photo, newName) { success ->
+                        // Si on vient du mode plein écran, retourner en mode plein écran après le renommage
+                        if (viewModel.wasInFullscreenMode.value) {
+                            viewModel.clearSelectedPhoto()
+                            viewModel.setFullscreenMode(true)
+                            viewModel.resetWasInFullscreenMode()
+                        }
                     }
-                    result
                 },
                 onDelete = { photo, ctx ->
                     val result = viewModel.deletePhoto(ctx, photo)

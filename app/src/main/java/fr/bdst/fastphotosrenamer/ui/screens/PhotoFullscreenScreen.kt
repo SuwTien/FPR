@@ -176,7 +176,13 @@ fun PhotoFullscreenScreen(
                     } else null
                     
                     if (currentPhoto != null) {
-                        onRename(currentPhoto, context)
+                        // Sauvegarder l'index courant avant de naviguer
+                        viewModel.setFullscreenPhotoIndex(pagerState.currentPage)
+                        viewModel.setWasInFullscreenMode(true)
+                        // Désactiver temporairement le mode plein écran pour aller à l'écran de renommage
+                        viewModel.setFullscreenMode(false)
+                        // Sélectionner la photo pour passer à l'écran de détail
+                        viewModel.selectPhoto(currentPhoto)
                     }
                 }
                 .background(

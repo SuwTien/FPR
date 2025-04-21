@@ -25,6 +25,13 @@ class FilePathUtils {
             val dcimDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
             return File(dcimDir, APP_FOLDER_NAME).absolutePath
         }
+
+        /**
+         * Obtient le chemin du dossier par défaut pour les photos
+         */
+        fun getDefaultPhotoDir(): String {
+            return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES).absolutePath
+        }
         
         /**
          * Vérifie si un chemin correspond au dossier DCIM/Camera

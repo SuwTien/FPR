@@ -1,120 +1,129 @@
 package fr.bdst.fastphotosrenamer.storage
 
-import android.Manifest
-import android.app.Activity
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.provider.Settings
 import android.widget.Toast
-import androidx.core.content.ContextCompat
-import androidx.documentfile.provider.DocumentFile
 import fr.bdst.fastphotosrenamer.model.PhotoModel
-import kotlinx.coroutines.CoroutineScope
+import fr.bdst.fastphotosrenamer.repository.interfaces.PhotoRepository
+import fr.bdst.fastphotosrenamer.utils.FilePathUtils
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Locale
 
+/**
+ * Utilitaire pour renommer les photos
+ */
 object PhotoRenamer {
-    
-    // Interface pour les callbacks après renommage
+
+    /**
+     * Interface de callback pour les opérations de renommage de photos
+     * @deprecated Utilisez plutôt les Flows retournés par les méthodes
+     */
+    @Deprecated("Utilisez plutôt les Flows retournés par les méthodes, cette interface sera supprimée dans une future version")
     interface RenameCallback {
         fun onRenameSuccess(newName: String)
         fun onRenameInProgress(inProgress: Boolean)
         fun onRenameComplete(reloadPhotos: Boolean)
     }
-    
+
     /**
-     * Méthode principale pour renommer une photo
+     * Renomme une photo et met à jour MediaStore
+     * @param context Le contexte de l'application
+     * @param photo La photo à renommer
+     * @param newName Le nouveau nom à appliquer
+     * @param callback Callback pour informer de la progression et du résultat (deprecated)
+     * @return true si l'opération a été initiée avec succès, false sinon
      */
-    fun renamePhoto(context: Context, photo: PhotoModel, newName: String, callback: RenameCallback): Boolean {
+    fun renamePhoto(
+        context: Context,
+        photo: PhotoModel,
+        newName: String,
+        callback: RenameCallback
+    ): Boolean {
+        // Vérifier que les paramètres sont valides
+        if (newName.isBlank() || photo.path.isBlank()) {
+            return false
+        }
+        
+        // Callback pour indiquer que l'opération est en cours
         callback.onRenameInProgress(true)
         
-        try {
-            // Vérifier les permissions
-            if (!checkPermissions(context)) {
-                callback.onRenameInProgress(false)
-                return false
-            }
-            
-            val contentResolver: ContentResolver = context.contentResolver
-            
-            // Détection du type de stockage
-            val isOnSDCard = photo.file.absolutePath.startsWith("/storage/") && 
-                            !photo.file.absolutePath.startsWith("/storage/emulated/0")
-            
-            // NOUVELLE PARTIE: Bloquer le renommage sur carte SD avec message explicatif
-            if (isOnSDCard) {
-                Toast.makeText(
-                    context, 
-                    "Le renommage sur carte SD n'est pas pris en charge dans cette version. " +
-                    "Veuillez utiliser le stockage interne.",
-                    Toast.LENGTH_LONG
-                ).show()
-                callback.onRenameInProgress(false)
-                return false
-            }
-            
-            // Si c'est sur le stockage interne, procéder au renommage normal
-            return renameOnInternalStorage(context, photo, newName, contentResolver, callback)
-            
-        } catch (e: Exception) {
-            Toast.makeText(context, "Exception: ${e.message}", Toast.LENGTH_SHORT).show()
-            e.printStackTrace()
-            
-            // Vérifier si le renommage a quand même réussi
-            val newFile = File(photo.file.parent, newName)
-            if (newFile.exists()) {
-                callback.onRenameSuccess(newName)
-                callback.onRenameComplete(true)
-                return true
-            }
-            
-            callback.onRenameInProgress(false)
-            return false
-        } finally {
-            // Toujours désactiver l'indicateur de progression
-            callback.onRenameInProgress(false)
-        }
-    }
-    
-    /**
-     * Vérifier les permissions nécessaires selon la version d'Android
-     */
-    private fun checkPermissions(context: Context): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (!Environment.isExternalStorageManager()) {
-                Toast.makeText(context, "L'accès à tous les fichiers est nécessaire pour renommer", Toast.LENGTH_LONG).show()
-                
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                val uri = Uri.fromParts("package", context.packageName, null)
-                intent.data = uri
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                
-                context.startActivity(intent)
-                return false
-            }
-        }
-        else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) 
-                    != PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(context, "Permission d'écriture requise pour renommer les fichiers", Toast.LENGTH_LONG).show()
-                
-                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.O) {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                    intent.data = Uri.fromParts("package", context.packageName, null)
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    context.startActivity(intent)
+        // Lancer l'opération asynchrone
+        GlobalScope.launch(Dispatchers.IO) {
+            try {
+                val parentPath = FilePathUtils.getParentFolderPath(photo.path)
+                if (parentPath == null) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Chemin parent non trouvé", Toast.LENGTH_SHORT).show()
+                        callback.onRenameInProgress(false)
+                        callback.onRenameComplete(false)
+                    }
+                    return@launch
                 }
-                return false
+                
+                val oldFile = File(photo.path)
+                if (!oldFile.exists()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Fichier non trouvé", Toast.LENGTH_SHORT).show()
+                        callback.onRenameInProgress(false)
+                        callback.onRenameComplete(false)
+                    }
+                    return@launch
+                }
+                
+                // Créer le fichier avec le nouveau nom
+                val newFile = File(parentPath, newName)
+                
+                // Vérifier si un fichier avec ce nom existe déjà
+                if (newFile.exists()) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Un fichier avec ce nom existe déjà", Toast.LENGTH_SHORT).show()
+                        callback.onRenameInProgress(false)
+                        callback.onRenameComplete(false)
+                    }
+                    return@launch
+                }
+                
+                // Tentative de renommage direct du fichier
+                val success = oldFile.renameTo(newFile)
+                if (success) {
+                    // Mettre à jour MediaStore
+                    updateMediaStore(context, photo, newFile)
+                    
+                    withContext(Dispatchers.Main) {
+                        // Informer du succès via callback
+                        callback.onRenameSuccess(newName)
+                        callback.onRenameInProgress(false)
+                        callback.onRenameComplete(true)
+                        
+                        // Afficher message de confirmation
+                        Toast.makeText(context, "Photo renommée en $newName", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Échec du renommage", Toast.LENGTH_SHORT).show()
+                        callback.onRenameInProgress(false)
+                        callback.onRenameComplete(false)
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Erreur: ${e.message}", Toast.LENGTH_SHORT).show()
+                    callback.onRenameInProgress(false)
+                    callback.onRenameComplete(false)
+                }
             }
         }
         
@@ -122,370 +131,233 @@ object PhotoRenamer {
     }
     
     /**
-     * Méthodes spécifiques pour le renommage sur carte SD
+     * Version moderne qui utilise les Flow au lieu des callbacks
+     * @param context Le contexte de l'application
+     * @param photo La photo à renommer
+     * @param newName Le nouveau nom à appliquer
+     * @return Un Flow émettant les résultats du processus de renommage
      */
-    private fun renameOnSDCard(
-        context: Context, 
-        photo: PhotoModel, 
-        newName: String,
-        contentResolver: ContentResolver,
-        callback: RenameCallback
-    ): Boolean {
-        // Approche robuste: copier + supprimer
+    fun renamePhotoFlow(
+        context: Context,
+        photo: PhotoModel,
+        newName: String
+    ): Flow<PhotoRepository.RenameResult> = flow {
+        // Émettre l'état "en cours"
+        emit(PhotoRepository.RenameResult(
+            success = false,
+            inProgress = true
+        ))
+        
         try {
-            val sourceFile = photo.file
-            val targetFile = File(sourceFile.parent, newName)
-            
-            // 1. Copier d'abord (plus sûr)
-            sourceFile.inputStream().use { input ->
-                targetFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
+            // Vérifier que les paramètres sont valides
+            if (newName.isBlank() || photo.path.isBlank()) {
+                emit(PhotoRepository.RenameResult(
+                    success = false,
+                    inProgress = false,
+                    error = "Paramètres invalides"
+                ))
+                return@flow
             }
             
-            // Vérifier que le nouveau fichier existe et a la bonne taille
-            if (targetFile.exists() && targetFile.length() == sourceFile.length()) {
-                // 2. Supprimer l'original seulement si la copie a réussi
-                val deleted = sourceFile.delete()
+            val parentPath = FilePathUtils.getParentFolderPath(photo.path)
+            if (parentPath == null) {
+                emit(PhotoRepository.RenameResult(
+                    success = false,
+                    inProgress = false,
+                    error = "Chemin parent non trouvé"
+                ))
+                return@flow
+            }
+            
+            val oldFile = File(photo.path)
+            if (!oldFile.exists()) {
+                emit(PhotoRepository.RenameResult(
+                    success = false,
+                    inProgress = false,
+                    error = "Fichier non trouvé"
+                ))
+                return@flow
+            }
+            
+            // Créer le fichier avec le nouveau nom
+            val newFile = File(parentPath, newName)
+            
+            // Vérifier si un fichier avec ce nom existe déjà
+            if (newFile.exists()) {
+                emit(PhotoRepository.RenameResult(
+                    success = false,
+                    inProgress = false,
+                    error = "Un fichier avec ce nom existe déjà"
+                ))
+                return@flow
+            }
+            
+            // Tentative de renommage direct du fichier
+            val success = oldFile.renameTo(newFile)
+            
+            if (success) {
+                // Mettre à jour MediaStore
+                val mainThreadOperations = updateMediaStoreFlow(context, photo, newFile)
                 
-                // 3. Mettre à jour MediaStore
-                try {
-                    // 3.1 Supprimer l'ancienne entrée
-                    contentResolver.delete(photo.uri, null, null)
-                    
-                    // 3.2 Ajouter la nouvelle entrée
-                    val values = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, newName)
-                        put(MediaStore.Images.Media.DATA, targetFile.absolutePath)
-                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-                    }
-                    contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                    
-                    // Forcer le scan média
-                    context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(targetFile)))
-                } catch (e: Exception) {
-                    // On continue car le fichier a bien été renommé
-                }
+                // Afficher message de confirmation dans le thread principal
+                Toast.makeText(context, "Photo renommée en $newName", Toast.LENGTH_SHORT).show()
                 
-                Toast.makeText(context, "Photo renommée avec succès", Toast.LENGTH_SHORT).show()
-                callback.onRenameSuccess(newName)
-                callback.onRenameComplete(true)
-                return true
+                emit(PhotoRepository.RenameResult(
+                    success = true,
+                    newName = newName,
+                    inProgress = false,
+                    reloadNeeded = true
+                ))
             } else {
-                // La copie a échoué ou le fichier n'a pas la bonne taille
-                if (targetFile.exists()) targetFile.delete() // Nettoyer si copie partielle
+                // Afficher message d'erreur dans le thread principal
+                Toast.makeText(context, "Échec du renommage", Toast.LENGTH_SHORT).show()
+                
+                emit(PhotoRepository.RenameResult(
+                    success = false,
+                    inProgress = false,
+                    error = "Échec du renommage"
+                ))
             }
         } catch (e: Exception) {
+            // Afficher message d'erreur dans le thread principal
+            Toast.makeText(context, "Erreur: ${e.message}", Toast.LENGTH_SHORT).show()
+            
+            emit(PhotoRepository.RenameResult(
+                success = false,
+                inProgress = false,
+                error = e.message
+            ))
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /**
+     * Version Flow-compatible pour mettre à jour MediaStore
+     */
+    private fun updateMediaStoreFlow(context: Context, oldPhoto: PhotoModel, newFile: File) {
+        // Approche différente selon la version d'Android
+        when {
+            // Android 10+ (Q) - méthode moderne
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                updateMediaStoreModernFlow(context, oldPhoto, newFile)
+            }
+            // Android 9- (P et avant) - méthode classique
+            else -> {
+                updateMediaStoreLegacyFlow(context, oldPhoto, newFile)
+            }
         }
         
-        Toast.makeText(context, "Impossible de renommer la photo sur la carte SD", Toast.LENGTH_LONG).show()
-        return false
+        // Notifier le système du changement
+        val mediaScanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
+        mediaScanIntent.data = Uri.fromFile(newFile)
+        context.sendBroadcast(mediaScanIntent)
+        
+        // Forcer une mise à jour du fichier pour éviter les problèmes de cache
+        MediaScannerConnection.scanFile(
+            context,
+            arrayOf(newFile.absolutePath),
+            null
+        ) { _, _ -> 
+            // Scan terminé, rien à faire ici
+        }
     }
     
     /**
-     * Méthodes pour le renommage sur stockage interne
+     * Met à jour MediaStore sur les versions modernes d'Android (10+) - compatible avec Flow
      */
-    private fun renameOnInternalStorage(
-        context: Context,
-        photo: PhotoModel,
-        newName: String,
-        contentResolver: ContentResolver,
-        callback: RenameCallback
-    ): Boolean {
-        val oldFile = photo.file
-        
-        // Déterminer si le fichier est dans DCIM/Camera
-        val isDCIMCamera = oldFile.absolutePath.contains("/DCIM/Camera/")
-        
-        // Traitement spécial pour DCIM/Camera
-        if (isDCIMCamera) {
-            try {
-                if (oldFile.exists()) {
-                    val parentPath = oldFile.parent ?: return false
-                    val newFile = File(parentPath, newName)
-                    
-                    // NOUVELLE APPROCHE: Essayer d'abord le renameTo direct
-                    var success = oldFile.renameTo(newFile)
-                    
-                    // Si échec, attendre un court délai et réessayer
-                    if (!success) {
-                        Thread.sleep(200)  // Attendre pour libérer les verrous potentiels
-                        success = oldFile.renameTo(newFile)
-                    }
-                    
-                    // Si le renommage direct réussit
-                    if (success) {
-                        // Mettre à jour MediaStore pour le nouveau fichier
-                        try {
-                            // Supprimer l'ancienne entrée
-                            contentResolver.delete(
-                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                "${MediaStore.Images.Media.DATA} = ?",
-                                arrayOf(oldFile.absolutePath)
-                            )
-                            
-                            // Ajouter la nouvelle entrée
-                            val values = ContentValues().apply {
-                                put(MediaStore.Images.Media.DATA, newFile.absolutePath)
-                                put(MediaStore.Images.Media.DISPLAY_NAME, newName)
-                                put(MediaStore.Images.Media.MIME_TYPE, getMimeType(newName))
-                            }
-                            
-                            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                            context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(newFile)))
-                            
-                            callback.onRenameSuccess(newName)
-                            callback.onRenameComplete(true)
-                            return true
-                        } catch (e: Exception) {
-                        }
-                    }
-                    
-                    // Si le renommage direct échoue, utiliser copier/coller avec préservation des métadonnées
-                    
-                    // 1. Sauvegarder les métadonnées importantes
-                    val lastModified = oldFile.lastModified()
-                    
-                    // 2. Copier le fichier
-                    oldFile.inputStream().use { input ->
-                        newFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    
-                    // 3. Vérifier et restaurer les métadonnées
-                    if (newFile.exists() && newFile.length() == oldFile.length()) {
-                        // Restaurer la date de dernière modification
-                        newFile.setLastModified(lastModified)
-                        
-                        // Supprimer l'ancien fichier
-                        val deleteSuccess = oldFile.delete()
-                        
-                        // 4. Mettre à jour MediaStore comme avant
-                        try {
-                            contentResolver.delete(
-                                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                                "${MediaStore.Images.Media.DATA} = ?",
-                                arrayOf(oldFile.absolutePath)
-                            )
-                            
-                            val values = ContentValues().apply {
-                                put(MediaStore.Images.Media.DATA, newFile.absolutePath)
-                                put(MediaStore.Images.Media.DISPLAY_NAME, newName)
-                                put(MediaStore.Images.Media.MIME_TYPE, getMimeType(newName))
-                                // Important: utiliser la date originale
-                                put(MediaStore.Images.Media.DATE_MODIFIED, lastModified / 1000)
-                            }
-                            
-                            contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                            context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(newFile)))
-                            
-                            callback.onRenameSuccess(newName)
-                            callback.onRenameComplete(true)
-                            return true
-                        } catch (e: Exception) {
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-            }
-        }
-        
-        // Le code original pour les autres dossiers ou si le code spécial échoue
-        // Essai 1: Méthode directe File.renameTo
-        try {
-            if (oldFile.exists()) {
-                val parentPath = oldFile.parent
-                val newFile = File(parentPath, newName)
-                
-                val success = oldFile.renameTo(newFile)
-                
-                if (success) {
-                    // Notifier le système du changement
-                    context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(newFile)))
-                    
-                    // Mettre à jour MediaStore
-                    val values = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, newName)
-                        put(MediaStore.Images.Media.DATA, newFile.absolutePath)
-                    }
-                    contentResolver.update(photo.uri, values, null, null)
-                    
-                    callback.onRenameSuccess(newName)
-                    callback.onRenameComplete(true)
-                    return true
-                }
-            }
-        } catch (e: Exception) {
-        }
-        
-        // Essai 2: Méthode spécifique pour Android 8.0
-        if (Build.VERSION.SDK_INT == Build.VERSION_CODES.O) {
-            try {
-                if (oldFile.exists()) {
-                    val parentPath = oldFile.parent ?: ""
-                    val newPath = "$parentPath/$newName"
-                    
-                    val values = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, newName)
-                        put(MediaStore.Images.Media.DATA, newPath)
-                    }
-                    
-                    val updatedRows = contentResolver.update(photo.uri, values, null, null)
-                    if (updatedRows > 0) {
-                        context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(File(newPath))))
-                        
-                        callback.onRenameSuccess(newName)
-                        callback.onRenameComplete(true)
-                        return true
-                    }
-                }
-            } catch (e: Exception) {
-            }
-        }
-        
-        // Essai 3: Méthode MediaStore standard
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, newName)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.Images.Media.IS_PENDING, 1)
-            }
-        }
-        
-        val updatedRows = contentResolver.update(photo.uri, values, null, null)
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            values.clear()
-            values.put(MediaStore.Images.Media.IS_PENDING, 0)
-            contentResolver.update(photo.uri, values, null, null)
-        }
-        
-        if (updatedRows > 0) {
-            callback.onRenameSuccess(newName)
-            callback.onRenameComplete(true)
-            return true
-        }
-        
-        // Si tout échoue, revenir aux méthodes habituelles
-        Toast.makeText(context, "Impossible de renommer le fichier", Toast.LENGTH_SHORT).show()
-        return false
-    }
-
-    private fun renameDCIMCameraPhoto(
-        context: Context,
-        photo: PhotoModel,
-        newName: String,
-        contentResolver: ContentResolver,
-        callback: RenameCallback
-    ): Boolean {
-        val oldFile = photo.file
-        val parentPath = oldFile.parent ?: return false
-        val newFile = File(parentPath, newName)
+    private fun updateMediaStoreModernFlow(context: Context, oldPhoto: PhotoModel, newFile: File) {
+        val resolver = context.contentResolver
         
         try {
-            // 1. Copier d'abord, ne pas utiliser renameTo() qui échoue souvent dans DCIM/Camera
-            oldFile.inputStream().use { input ->
-                newFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
+            // Créer des values pour la mise à jour
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, newFile.name)
+                put(MediaStore.MediaColumns.DATA, newFile.absolutePath)
             }
             
-            // 2. Vérifier que la copie est complète
-            if (newFile.exists() && newFile.length() == oldFile.length()) {
-                // 3. Supprimer l'ancien fichier SEULEMENT si la copie est réussie
-                val deleteSuccess = oldFile.delete()
-                
-                // 4. Mettre à jour MediaStore - partie TRÈS IMPORTANTE
-                try {
-                    // 4.1 Supprimer l'ancienne entrée
-                    val deletedRows = contentResolver.delete(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                        "${MediaStore.Images.Media.DATA} = ?",
-                        arrayOf(oldFile.absolutePath)
-                    )
-                    
-                    // 4.2 Ajouter la nouvelle entrée
-                    val values = ContentValues().apply {
-                        put(MediaStore.Images.Media.DATA, newFile.absolutePath)
-                        put(MediaStore.Images.Media.DISPLAY_NAME, newName)
-                        put(MediaStore.Images.Media.MIME_TYPE, getMimeType(newName))
-                        put(MediaStore.Images.Media.SIZE, newFile.length())
-                        put(MediaStore.Images.Media.DATE_MODIFIED, newFile.lastModified() / 1000)
-                    }
-                    
-                    contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                    
-                    // 4.3 Demander au système de scanner le nouveau fichier
-                    context.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(newFile)))
-                    
-                    // 5. Succès!
-                    callback.onRenameSuccess(newName)
-                    callback.onRenameComplete(true)
-                    return true
-                } catch (e: Exception) {
-                }
-            }
+            // Mettre à jour l'entrée existante
+            resolver.update(oldPhoto.uri, values, null, null)
         } catch (e: Exception) {
+            e.printStackTrace()
+            
+            // Fallback : suppression et création d'une nouvelle entrée
+            try {
+                resolver.delete(oldPhoto.uri, null, null)
+                
+                // Rafraîchir la base de données MediaStore
+                MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(newFile.absolutePath),
+                    null,
+                    null
+                )
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+            }
         }
-        
-        return false
     }
     
     /**
-     * Renommage avec le Storage Access Framework (solution de dernier recours)
+     * Met à jour MediaStore sur les versions antérieures d'Android (avant 10) - compatible avec Flow
      */
-    private fun renameWithSAF(
-        context: Context,
-        photo: PhotoModel,
-        newName: String,
-        callback: RenameCallback
-    ): Boolean {
-        Toast.makeText(context, "Tentative avec le Storage Access Framework...", Toast.LENGTH_SHORT).show()
-        
-        val prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
-        val treeUriString = prefs.getString("document_tree_uri", null)
-        
-        if (treeUriString == null) {
-            // Demander l'accès via SAF
-            if (context is Activity) {
-                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                context.startActivity(intent)
-            }
-            
-            Toast.makeText(context, "Sélectionne le dossier qui contient tes photos", Toast.LENGTH_LONG).show()
-            return false
-        }
+    private fun updateMediaStoreLegacyFlow(context: Context, oldPhoto: PhotoModel, newFile: File) {
+        val resolver = context.contentResolver
         
         try {
-            // Rechercher et renommer le fichier via SAF
-            // Code existant pour SAF...
-            // ...
-            return true  // Si réussi
+            // Supprimer l'ancienne entrée
+            resolver.delete(oldPhoto.uri, null, null)
+            
+            // Créer une nouvelle entrée
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, newFile.name)
+                put(MediaStore.Images.Media.DATA, newFile.absolutePath)
+                put(MediaStore.Images.Media.MIME_TYPE, getMimeType(newFile.name))
+                put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+                put(MediaStore.Images.Media.DATE_MODIFIED, newFile.lastModified() / 1000)
+                put(MediaStore.Images.Media.SIZE, newFile.length())
+            }
+            
+            val externalUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            resolver.insert(externalUri, values)
         } catch (e: Exception) {
-            Toast.makeText(context, "Erreur SAF: ${e.message}", Toast.LENGTH_SHORT).show()
+            e.printStackTrace()
         }
-        
-        return false
+    }
+    
+    // Méthodes de support pour la compatibilité avec l'ancienne approche
+    
+    /**
+     * Met à jour les entrées MediaStore suite au renommage d'un fichier
+     * @deprecated Utilisez updateMediaStoreFlow à la place
+     */
+    @Deprecated("Utilisez updateMediaStoreFlow à la place")
+    private suspend fun updateMediaStore(context: Context, oldPhoto: PhotoModel, newFile: File) {
+        // Déléguer à la version Flow-compatible
+        updateMediaStoreFlow(context, oldPhoto, newFile)
     }
     
     /**
-     * Utilitaire pour chercher un fichier dans l'arborescence DocumentFile
+     * Met à jour MediaStore sur les versions modernes d'Android (10+)
+     * @deprecated Utilisez updateMediaStoreModernFlow à la place
      */
-    private fun findFile(dir: DocumentFile, name: String): DocumentFile? {
-        dir.listFiles().forEach { file ->
-            if (file.name == name) return file
-            if (file.isDirectory) {
-                findFile(file, name)?.let { return it }
-            }
-        }
-        return null
+    @Deprecated("Utilisez updateMediaStoreModernFlow à la place")
+    private suspend fun updateMediaStoreModern(context: Context, oldPhoto: PhotoModel, newFile: File) {
+        updateMediaStoreModernFlow(context, oldPhoto, newFile)
     }
-
+    
+    /**
+     * Met à jour MediaStore sur les versions antérieures d'Android (avant 10)
+     * @deprecated Utilisez updateMediaStoreLegacyFlow à la place
+     */
+    @Deprecated("Utilisez updateMediaStoreLegacyFlow à la place")
+    private fun updateMediaStoreLegacy(context: Context, oldPhoto: PhotoModel, newFile: File) {
+        updateMediaStoreLegacyFlow(context, oldPhoto, newFile)
+    }
+    
+    /**
+     * Obtient le type MIME d'un fichier à partir de son extension
+     */
     private fun getMimeType(fileName: String): String {
-        val extension = fileName.substring(fileName.lastIndexOf(".") + 1).lowercase(Locale.ROOT)
+        val extension = fileName.substring(fileName.lastIndexOf(".") + 1).lowercase()
         return when (extension) {
             "jpg", "jpeg" -> "image/jpeg"
             "png" -> "image/png"

@@ -249,12 +249,15 @@ class MainActivity : ComponentActivity() {
         // Vérifier l'existence des dossiers sans changer le dossier courant
         ensureAppFolderExistsWithoutChangingCurrentFolder()
         
-        // Recharger les photos uniquement si les permissions sont accordées
-        if (areMediaPermissionsGranted()) {
+        // Vérifier si une opération de renommage est en cours
+        val isRenameOperationInProgress = viewModel.isRenameOperationInProgress.value
+        
+        // Recharger les photos uniquement si les permissions sont accordées ET qu'aucune opération de renommage n'est en cours
+        if (areMediaPermissionsGranted() && !isRenameOperationInProgress) {
             // Au lieu de charger DCIM/Camera par défaut, on charge le dossier actuellement sélectionné
-            val currentFolder = viewModel.currentFolder.value
-            if (currentFolder.isNotEmpty()) {
-                viewModel.loadPhotosFromFolder(this, currentFolder)
+            val currentFolderPath = viewModel.currentFolder.value
+            if (!currentFolderPath.isNullOrEmpty()) {
+                viewModel.loadPhotosFromFolder(this, currentFolderPath)
             } else {
                 // Seulement si aucun dossier n'est sélectionné, on charge le dossier par défaut
                 viewModel.loadPhotos(this)

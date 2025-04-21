@@ -41,7 +41,7 @@ fun PhotoDetailScreen(
     photos: List<PhotoModel>,
     photoIndex: Int,
     onBack: () -> Unit,
-    onRename: (PhotoModel, String, Context) -> Boolean,
+    onRename: (PhotoModel, String, Context) -> Unit,
     onDelete: (PhotoModel, Context) -> Boolean,
     viewModel: PhotosViewModel,
     startInRenamingMode: Boolean = true
@@ -193,13 +193,10 @@ fun PhotoDetailScreen(
                                             textFieldValue.text
                                         }
                                         keyboardController?.hide()
-                                        val success = onRename(currentPhoto, newFullName, context)
-                                        if (success) {
-                                            isRenaming = false
-                                            coroutineScope.launch {
-                                                onBack()
-                                            }
-                                        }
+                                        // Ne pas revenir immédiatement, attendre le résultat du renommage
+                                        isRenaming = false 
+                                        onRename(currentPhoto, newFullName, context)
+                                        // Ne PAS appeler onBack() ici, c'est fait dans le callback
                                     }
                                 }
                             ),
@@ -275,13 +272,10 @@ fun PhotoDetailScreen(
                                         textFieldValue.text
                                     }
                                     keyboardController?.hide()
-                                    val success = onRename(currentPhoto, newFullName, context)
-                                    if (success) {
-                                        isRenaming = false
-                                        coroutineScope.launch {
-                                            onBack()
-                                        }
-                                    }
+                                    // Ne pas revenir immédiatement, attendre le résultat du renommage
+                                    isRenaming = false 
+                                    onRename(currentPhoto, newFullName, context)
+                                    // Ne PAS appeler onBack() ici, c'est fait dans le callback
                                 }
                             },
                             enabled = isRenameEnabled,

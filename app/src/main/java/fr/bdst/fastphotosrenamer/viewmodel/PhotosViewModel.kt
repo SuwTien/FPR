@@ -1,405 +1,394 @@
 package fr.bdst.fastphotosrenamer.viewmodel
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
-import android.os.Environment
-import android.provider.MediaStore
-import android.widget.Toast
-import androidx.activity.result.ActivityResultLauncher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import fr.bdst.fastphotosrenamer.di.AppDependencies
 import fr.bdst.fastphotosrenamer.model.PhotoModel
 import fr.bdst.fastphotosrenamer.storage.FolderManager
 import fr.bdst.fastphotosrenamer.storage.PhotoManager
 import fr.bdst.fastphotosrenamer.storage.PhotoRenamer
 import fr.bdst.fastphotosrenamer.utils.FilePathUtils
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
+/**
+ * ViewModel pour la gestion des photos et des dossiers
+ * Implémentation avec StateFlow pour la Phase 3
+ */
 class PhotosViewModel : ViewModel() {
     
+    // Instances des managers injectées via AppDependencies
+    private val photoManager: PhotoManager = AppDependencies.photoManager
+    private val folderManager: FolderManager = AppDependencies.folderManager
+    
+    // StateFlows pour les photos
     private val _photos = MutableStateFlow<List<PhotoModel>>(emptyList())
-    val photos: StateFlow<List<PhotoModel>> = _photos
+    val photos: StateFlow<List<PhotoModel>> = _photos.asStateFlow()
     
-    private val _selectedPhoto = MutableStateFlow<PhotoModel?>(null)
-    val selectedPhoto: StateFlow<PhotoModel?> = _selectedPhoto
-
-    // Accès aux états des gestionnaires
-    val isRenameOperationInProgress = PhotoManager.isRenameOperationInProgress
-    val availableFolders = FolderManager.availableFolders
-    val shouldOpenFolderDropdown = FolderManager.shouldOpenFolderDropdown
-
-    // Variables d'état pour les dossiers
-    private val _currentFolder = MutableStateFlow<String>("")
-    val currentFolder: StateFlow<String> = _currentFolder
-
     private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
     
-    // Nouveaux états pour le mode plein écran
-    private val _fullscreenMode = MutableStateFlow(false)
-    val fullscreenMode: StateFlow<Boolean> = _fullscreenMode
-    
-    // Index de la photo actuellement affichée en mode plein écran
-    private val _fullscreenPhotoIndex = MutableStateFlow(0)
-    val fullscreenPhotoIndex: StateFlow<Int> = _fullscreenPhotoIndex
-    
-    // État pour suivre si on était en mode plein écran avant d'aller sur l'écran de renommage
-    private val _wasInFullscreenMode = MutableStateFlow(false)
-    val wasInFullscreenMode: Boolean
-        get() = _wasInFullscreenMode.value
-
-    // Nouveaux états pour la pagination
-    private val _currentPage = MutableStateFlow(0)
-    val currentPage: StateFlow<Int> = _currentPage
-
     private val _hasMorePhotos = MutableStateFlow(false)
-    val hasMorePhotos: StateFlow<Boolean> = _hasMorePhotos
-    
+    val hasMorePhotos: StateFlow<Boolean> = _hasMorePhotos.asStateFlow()
+
+    // StateFlows pour la photo sélectionnée
+    private val _selectedPhoto = MutableStateFlow<PhotoModel?>(null)
+    val selectedPhoto: StateFlow<PhotoModel?> = _selectedPhoto.asStateFlow()
+
+    // StateFlow pour l'opération de renommage en cours
+    private val _isRenameOperationInProgress = MutableStateFlow(false)
+    val isRenameOperationInProgress: StateFlow<Boolean> = _isRenameOperationInProgress.asStateFlow()
+
+    // StateFlows pour le mode plein écran
+    private val _fullscreenMode = MutableStateFlow(false)
+    val fullscreenMode: StateFlow<Boolean> = _fullscreenMode.asStateFlow()
+
+    // StateFlow pour l'index de la photo en plein écran
+    private val _fullscreenPhotoIndex = MutableStateFlow(0)
+    val fullscreenPhotoIndex: StateFlow<Int> = _fullscreenPhotoIndex.asStateFlow()
+
+    // StateFlow pour indiquer si on vient du mode plein écran
+    private val _wasInFullscreenMode = MutableStateFlow(false)
+    val wasInFullscreenMode: StateFlow<Boolean> = _wasInFullscreenMode.asStateFlow()
+
+    // StateFlow pour indiquer si on charge plus de photos
     private val _isLoadingMore = MutableStateFlow(false)
-    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore
-
-    // Initialiser le dossier courant dans init {}
-    init {
-        // Utiliser FolderManager pour obtenir le dossier par défaut
-        _currentFolder.value = FolderManager.getDefaultFolder()
+    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
+    
+    // StateFlows pour les dossiers
+    private val _availableFolders = MutableStateFlow<List<String>>(emptyList())
+    val availableFolders: StateFlow<List<String>> = _availableFolders.asStateFlow()
+    
+    private val _currentFolder = MutableStateFlow("")
+    val currentFolder: StateFlow<String> = _currentFolder.asStateFlow()
+    
+    // StateFlow pour l'état du FolderPicker
+    private val _shouldOpenFolderDropdown = MutableStateFlow(false)
+    val shouldOpenFolderDropdown: StateFlow<Boolean> = _shouldOpenFolderDropdown.asStateFlow()
+    
+    // État pour la pagination
+    private var photosOffset = 0
+    
+    /**
+     * Initialise le ViewModel avec le contexte de l'application
+     */
+    fun initialize(context: Context) {
+        // Charge les dossiers disponibles
+        loadAvailableFolders(context)
+        
+        // S'assurer qu'un dossier par défaut est défini
+        if (_currentFolder.value.isEmpty()) {
+            viewModelScope.launch {
+                val defaultFolder = folderManager.getDefaultFolder()
+                _currentFolder.value = defaultFolder
+                loadPhotos(context, defaultFolder)
+            }
+        }
     }
-
-    // Méthode pour charger les photos d'un dossier avec pagination
-    fun loadPhotosFromFolderPaginated(context: Context, folderPath: String, reset: Boolean = true) {
+    
+    /**
+     * Charge les photos depuis un dossier spécifique
+     */
+    fun loadPhotos(context: Context, folderPath: String = "") {
+        _isLoading.value = true
+        photosOffset = 0 // Réinitialiser l'offset pour un nouveau chargement
+        
         viewModelScope.launch {
-            if (reset) {
-                _isLoading.value = true
-                _currentPage.value = 0
-                _photos.value = emptyList()
+            // Si un dossier spécifique est fourni, l'utiliser
+            val folder = if (folderPath.isNotEmpty()) {
+                folderPath
             } else {
-                _isLoadingMore.value = true
+                _currentFolder.value.takeIf { it.isNotEmpty() } ?: folderManager.getDefaultFolder()
             }
             
-            try {
-                // Sauvegarder l'index de la photo en plein écran
-                val savedFullscreenIndex = _fullscreenPhotoIndex.value
-                
-                // Calculer l'offset pour le chargement paginé
-                val offset = _currentPage.value * PhotoManager.PAGE_SIZE
-                
-                // Charger une page de photos en utilisant PhotoManager
-                val (newPhotos, hasMore) = PhotoManager.loadPhotosPageFromFolder(
-                    context,
-                    folderPath,
-                    offset,
-                    PhotoManager.PAGE_SIZE
-                )
-                
-                // Mettre à jour l'état
-                if (reset) {
-                    _photos.value = newPhotos
-                } else {
-                    _photos.value = _photos.value + newPhotos
-                }
-                
+            // Mettre à jour le dossier courant si nécessaire
+            if (_currentFolder.value != folder) {
+                _currentFolder.value = folder
+            }
+            
+            // Charger les photos
+            photoManager.loadPhotos(context, folder).collect { (photos, hasMore) ->
+                _photos.value = photos
                 _hasMorePhotos.value = hasMore
+                _isLoading.value = false
+                photosOffset = photos.size
+            }
+        }
+    }
+    
+    /**
+     * Charge plus de photos (pagination)
+     */
+    fun loadMorePhotos(context: Context) {
+        if (_isLoading.value || !_hasMorePhotos.value) {
+            return
+        }
+        
+        _isLoadingMore.value = true
+        
+        viewModelScope.launch {
+            val folderPath = _currentFolder.value.takeIf { it.isNotEmpty() } ?: return@launch
+            
+            photoManager.loadPhotosPageFromFolder(
+                context, folderPath, photosOffset, PhotoManager.PAGE_SIZE
+            ).collect { (newPhotos, hasMore) ->
+                // Combiner les nouvelles photos avec celles existantes
+                val currentList = _photos.value
+                val updatedList = currentList + newPhotos
                 
-                // Incrémenter la page pour le prochain chargement
-                if (hasMore) {
-                    _currentPage.value = _currentPage.value + 1
+                _photos.value = updatedList
+                _hasMorePhotos.value = hasMore
+                _isLoading.value = false
+                _isLoadingMore.value = false
+                photosOffset = updatedList.size
+            }
+        }
+    }
+    
+    /**
+     * Supprime une photo
+     */
+    fun deletePhoto(context: Context, photo: PhotoModel): Boolean {
+        var success = false
+        viewModelScope.launch {
+            photoManager.deletePhoto(context, photo).collect { result ->
+                if (result) {
+                    // Mettre à jour la liste des photos
+                    val currentList = _photos.value.toMutableList()
+                    currentList.remove(photo)
+                    _photos.value = currentList
+                    success = true
                 }
-                
-                // Restaurer l'index en plein écran si nécessaire
-                if (_fullscreenMode.value && savedFullscreenIndex < _photos.value.size) {
-                    _fullscreenPhotoIndex.value = savedFullscreenIndex
+            }
+        }
+        return success
+    }
+    
+    /**
+     * Renomme une photo
+     * @param onComplete Callback appelé lorsque l'opération est terminée, avec un booléen indiquant le succès
+     */
+    fun renamePhoto(context: Context, photo: PhotoModel, newName: String, onComplete: (Boolean) -> Unit) {
+        _isRenameOperationInProgress.value = true
+        
+        viewModelScope.launch {
+            PhotoRenamer.renamePhotoFlow(context, photo, newName)
+                .collect { result ->
+                    if (!result.inProgress) {
+                        _isRenameOperationInProgress.value = false
+                        
+                        if (result.success) {
+                            // Recharger les photos si nécessaire
+                            if (result.reloadNeeded) {
+                                loadPhotos(context, _currentFolder.value)
+                            }
+                            onComplete(true)
+                        } else {
+                            onComplete(false)
+                        }
+                    }
                 }
-            } catch (e: Exception) {
-                // En cas d'erreur, s'assurer qu'on a au moins une liste vide
-                if (reset) {
-                    _photos.value = emptyList()
-                }
-                android.util.Log.e("FPR_DEBUG", "Erreur de chargement: ${e.message}")
-            } finally {
-                if (reset) {
-                    _isLoading.value = false
-                } else {
-                    _isLoadingMore.value = false
+        }
+    }
+    
+    /**
+     * Charge la liste des dossiers disponibles
+     */
+    fun loadAvailableFolders(context: Context) {
+        viewModelScope.launch {
+            folderManager.loadAvailableFolders(context).collect { folders ->
+                _availableFolders.value = folders
+            }
+        }
+    }
+    
+    /**
+     * Crée un nouveau dossier
+     */
+    fun createNewFolder(context: Context, folderName: String) {
+        viewModelScope.launch {
+            folderManager.createNewFolder(context, folderName).collect { newFolderPath ->
+                if (newFolderPath != null) {
+                    // Si la création a réussi, naviguer vers ce dossier
+                    _currentFolder.value = newFolderPath
+                    loadPhotos(context, newFolderPath)
                 }
             }
         }
     }
     
-    // Méthode pour charger la page suivante
-    fun loadMorePhotos(context: Context) {
-        if (_isLoadingMore.value || !_hasMorePhotos.value) {
-            return // Ne rien faire si déjà en train de charger ou s'il n'y a plus de photos
-        }
+    /**
+     * Importe les photos de l'appareil photo
+     */
+    fun importPhotosFromCamera(context: Context) {
+        val currentFolderPath = _currentFolder.value.takeIf { it.isNotEmpty() } ?: folderManager.getDefaultFolder()
         
-        loadPhotosFromFolderPaginated(context, _currentFolder.value, false)
-    }
-
-    // Remplacer la méthode originale par la version utilisant PhotoManager
-    fun loadPhotosFromFolder(context: Context, folderPath: String) {
-        // Réinitialiser et charger la première page
-        loadPhotosFromFolderPaginated(context, folderPath, true)
-    }
-
-    // Méthode pour charger la liste des dossiers disponibles - utilise FolderManager
-    fun loadAvailableFolders(context: Context) {
         viewModelScope.launch {
-            FolderManager.loadAvailableFolders(context)
+            photoManager.importPhotosFromCamera(context, currentFolderPath) { imported, skipped ->
+                if (imported > 0) {
+                    // Recharger les photos après l'importation
+                    loadPhotos(context, currentFolderPath)
+                }
+            }.collect() // Collecte le Flow pour déclencher l'opération
+        }
+    }
+    
+    /**
+     * Déplace les photos d'un dossier vers un autre
+     */
+    fun movePhotosFromFolder(context: Context, sourceFolder: String, destinationFolder: String) {
+        viewModelScope.launch {
+            photoManager.movePhotosFromFolder(context, sourceFolder, destinationFolder) { moved, skipped, failed ->
+                if (moved > 0) {
+                    // Si des photos ont été déplacées, recharger le dossier actuel
+                    loadPhotos(context, _currentFolder.value)
+                }
+            }.collect() // Collecte le Flow pour déclencher l'opération
         }
     }
 
-    // Méthode pour définir le dossier courant
+    /**
+     * Déplace les photos du dossier DCIM/Camera vers un dossier de destination
+     */
+    fun movePhotosFromCamera(context: Context, sourceFolder: String, destinationFolder: String) {
+        movePhotosFromFolder(context, sourceFolder, destinationFolder)
+    }
+    
+    /**
+     * Définit l'état d'ouverture du menu déroulant des dossiers
+     */
+    fun setShouldOpenFolderDropdown(shouldOpen: Boolean) {
+        _shouldOpenFolderDropdown.value = shouldOpen
+        folderManager.setShouldOpenFolderDropdown(shouldOpen)
+    }
+    
+    /**
+     * Réinitialise l'état du menu déroulant des dossiers
+     */
+    fun resetShouldOpenFolderDropdown() {
+        _shouldOpenFolderDropdown.value = false
+        folderManager.resetShouldOpenFolderDropdown()
+    }
+    
+    /**
+     * Vérifie si un nom de fichier existe déjà dans le dossier parent d'un fichier
+     */
+    fun checkIfNameExists(currentPhotoPath: String, newFullName: String): Boolean {
+        return photoManager.checkIfNameExists(currentPhotoPath, newFullName)
+    }
+    
+    /**
+     * Vérifie si un dossier existe
+     */
+    fun folderExists(folderPath: String): Boolean {
+        return folderManager.folderExists(folderPath)
+    }
+
+    /**
+     * Sélectionne une photo pour l'affichage ou l'édition
+     */
+    fun selectPhoto(photo: PhotoModel) {
+        _selectedPhoto.value = photo
+    }
+
+    /**
+     * Efface la photo sélectionnée
+     */
+    fun clearSelectedPhoto() {
+        _selectedPhoto.value = null
+    }
+
+    /**
+     * Charge les photos depuis un dossier spécifique
+     */
+    fun loadPhotosFromFolder(context: Context, folderPath: String) {
+        loadPhotos(context, folderPath)
+    }
+
+    /**
+     * Lance l'appareil photo
+     */
+    fun launchCamera(context: Context, cameraLauncher: androidx.activity.result.ActivityResultLauncher<Intent>) {
+        val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+        cameraLauncher.launch(intent)
+    }
+
+    /**
+     * Définit le dossier courant
+     */
     fun setCurrentFolder(folderPath: String) {
         _currentFolder.value = folderPath
     }
 
-    // Méthode pour créer un nouveau dossier - utilise FolderManager
-    fun createNewFolder(context: Context, folderName: String) {
-        viewModelScope.launch {
-            // Utiliser FolderManager pour créer le dossier
-            val newFolderPath = FolderManager.createNewFolder(context, folderName)
-            
-            if (newFolderPath != null) {
-                // Trouver et définir DCIM/Camera comme dossier courant
-                val cameraFolderPath = FilePathUtils.getCameraFolderPath()
-                if (FolderManager.folderExists(cameraFolderPath)) {
-                    _currentFolder.value = cameraFolderPath
-                    loadPhotosFromFolder(context, cameraFolderPath)
-                } else {
-                    // Si DCIM/Camera n'existe pas, utiliser le dossier nouvellement créé
-                    _currentFolder.value = newFolderPath
-                    loadPhotosFromFolder(context, newFolderPath)
-                }
-                
-                // Indiquer qu'il faut ouvrir le menu déroulant pour montrer le nouveau dossier
-                FolderManager.setShouldOpenFolderDropdown(true)
-            }
-        }
-    }
-    
-    // Méthode pour définir l'état d'ouverture du menu déroulant - utilise FolderManager
-    fun setShouldOpenFolderDropdown(shouldOpen: Boolean) {
-        FolderManager.setShouldOpenFolderDropdown(shouldOpen)
-    }
-    
-    // Méthode pour réinitialiser l'état d'ouverture du menu déroulant - utilise FolderManager
-    fun resetShouldOpenFolderDropdown() {
-        FolderManager.resetShouldOpenFolderDropdown()
-    }
-    
-    // FONCTION 1: Chargement des photos selon le contexte (dossier spécifique ou DCIM/Camera)
-    fun loadPhotos(context: Context) {
-        viewModelScope.launch {
-            _isLoading.value = true
-            _photos.value = emptyList() // Vider la liste actuelle
-            _currentPage.value = 0 // Réinitialiser la pagination
-            
-            try {
-                // Utiliser PhotoManager pour charger les photos
-                val (loadedPhotos, hasMore) = PhotoManager.loadPhotos(context, _currentFolder.value)
-                
-                _photos.value = loadedPhotos
-                _hasMorePhotos.value = hasMore
-                
-                if (hasMore) {
-                    _currentPage.value = 1 // Première page chargée
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("FPR_DEBUG", "Erreur lors du chargement des photos: ${e.message}")
-            } finally {
-                _isLoading.value = false
-            }
-        }
-    }
-    
-    fun selectPhoto(photo: PhotoModel) {
-        android.util.Log.d("FPR_DEBUG", "Photo sélectionnée: ${photo.name}, path: ${photo.path}")
-        
-        // Vérifier d'abord si la photo existe dans la liste actuelle des photos
-        val photoIndex = _photos.value.indexOf(photo)
-        
-        if (photoIndex != -1) {
-            // La photo existe dans la liste courante des photos, on peut la sélectionner en toute sécurité
-            _selectedPhoto.value = _photos.value[photoIndex]  // Utiliser la référence de la liste actuelle
-            android.util.Log.d("FPR_DEBUG", "Photo trouvée dans la liste actuelle à l'index $photoIndex")
-        } else {
-            // La photo n'est pas dans la liste actuelle des photos
-            // Cela peut arriver lors d'un changement de répertoire
-            android.util.Log.d("FPR_DEBUG", "Photo non trouvée dans la liste actuelle, ignorer la sélection")
-            
-            // On ne met pas à jour _selectedPhoto.value pour éviter d'avoir une référence à une photo d'un autre dossier
-            // On pourrait afficher un message Toast à l'utilisateur, mais ce n'est pas nécessaire car l'UI sera simplement rafraîchie
-            
-            // S'assurer qu'aucune photo n'est sélectionnée
-            _selectedPhoto.value = null
-        }
-    }
-    
-    fun clearSelectedPhoto() {
-        _selectedPhoto.value = null
-    }
-    
-    fun updateSelectedPhotoAfterRename(newName: String) {
-        _selectedPhoto.value?.let { currentPhoto -> 
-            val updatedPhoto = currentPhoto.copy(name = newName)
-            _selectedPhoto.value = updatedPhoto
-        }
-    }
-    
-    // Utiliser PhotoManager pour renommer la photo
-    fun renamePhoto(context: Context, photo: PhotoModel, newName: String): Boolean {
-        // Créer un callback pour gérer les événements de renommage
-        val callback = object : PhotoRenamer.RenameCallback {
-            override fun onRenameSuccess(newName: String) {
-                updateSelectedPhotoAfterRename(newName)
-            }
-            
-            override fun onRenameInProgress(inProgress: Boolean) {
-                // Non nécessaire de gérer ici, le PhotoManager s'en occupe
-            }
-            
-            override fun onRenameComplete(reloadPhotos: Boolean) {
-                if (reloadPhotos) {
-                    viewModelScope.launch {
-                        delay(500)
-                        loadPhotos(context)
-                    }
-                }
-            }
-        }
-        
-        return PhotoManager.renamePhoto(context, photo, newName, callback)
-    }
-    
-    // Utiliser PhotoManager pour supprimer la photo
-    fun deletePhoto(context: Context, photo: PhotoModel): Boolean {
-        val success = PhotoManager.deletePhoto(context, photo)
-        
-        if (success) {
-            viewModelScope.launch {
-                delay(500)
-                loadPhotos(context)
-            }
-        }
-        
-        return success
-    }
-    
-    // Utiliser Activity pour lancer l'appareil photo
-    fun launchCamera(activity: Activity, cameraLauncher: ActivityResultLauncher<Intent>) {
-        // Utiliser INTENT_ACTION_STILL_IMAGE_CAMERA au lieu de ACTION_IMAGE_CAPTURE
-        // Cela ouvre l'appareil photo en mode normal et permet de prendre plusieurs photos
-        val cameraIntent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
-    
-        if (cameraIntent.resolveActivity(activity.packageManager) != null) {
-            cameraLauncher.launch(cameraIntent)
-        } else {
-            Toast.makeText(activity, "Aucune application d'appareil photo trouvée", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Déléguer la vérification du nom au PhotoManager
-    fun checkIfNameExists(currentPhotoPath: String, newFullName: String): Boolean {
-        return PhotoManager.checkIfNameExists(currentPhotoPath, newFullName)
-    }
-
-    // Utiliser PhotoManager pour importer des photos depuis le dossier Camera
-    fun importPhotosFromCamera(context: Context) {
-        viewModelScope.launch {
-            PhotoManager.importPhotosFromCamera(context, _currentFolder.value) { imported, skipped -> 
-                if (imported > 0) {
-                    // Rafraîchir la liste des photos
-                    loadPhotosFromFolder(context, _currentFolder.value)
-                }
-            }
-        }
-    }
-
-    // Utiliser PhotoManager pour déplacer des photos entre dossiers
-    fun movePhotosFromCamera(context: Context, sourceFolder: String, destinationFolder: String) {
-        viewModelScope.launch {
-            // Déplacer les photos et obtenir les résultats
-            val (moved, skipped, failed) = PhotoManager.movePhotosFromFolder(context, sourceFolder, destinationFolder) { _, _, _ -> 
-                // Déterminer quel dossier doit être rafraîchi
-                when (_currentFolder.value) {
-                    sourceFolder -> {
-                        // Si on affiche le dossier source, le rafraîchir
-                        loadPhotosFromFolder(context, sourceFolder)
-                    }
-                    destinationFolder -> {
-                        // Si on affiche le dossier destination, le rafraîchir
-                        loadPhotosFromFolder(context, destinationFolder)
-                    }
-                    else -> {
-                        // Dans les autres cas, rafraîchir le dossier courant
-                        loadPhotosFromFolder(context, _currentFolder.value)
-                    }
-                }
-            }
-        }
-    }
-
-    // Utiliser PhotoManager pour obtenir les photos de l'appareil photo
-    fun getCameraPhotos(context: Context): List<PhotoModel> {
-        return PhotoManager.getCameraPhotos(context)
-    }
-    
-    // Méthodes pour le mode plein écran
-    
-    // Activer/désactiver le mode plein écran
+    /**
+     * Active ou désactive le mode plein écran
+     */
     fun setFullscreenMode(enabled: Boolean) {
         _fullscreenMode.value = enabled
     }
-    
-    // Définir l'index de la photo actuellement affichée en plein écran
+
+    /**
+     * Définit l'index de la photo en mode plein écran
+     */
     fun setFullscreenPhotoIndex(index: Int) {
-        if (index >= 0 && index < _photos.value.size) {
-            _fullscreenPhotoIndex.value = index
-            // Ne pas mettre à jour la photo sélectionnée, pour éviter la confusion
-            // lors de la sélection dans la grille après navigation en plein écran
-        }
+        _fullscreenPhotoIndex.value = index
     }
-    
-    // Passer à la photo suivante en mode plein écran
+
+    /**
+     * Passe à la photo suivante en mode plein écran
+     */
     fun nextFullscreenPhoto() {
         val currentIndex = _fullscreenPhotoIndex.value
-        val photosSize = _photos.value.size
-        
-        if (photosSize > 0) {
-            // Passer à la photo suivante avec retour au début si on atteint la fin
-            val nextIndex = (currentIndex + 1) % photosSize
-            setFullscreenPhotoIndex(nextIndex)
+        val maxIndex = _photos.value.size - 1
+        if (currentIndex < maxIndex) {
+            _fullscreenPhotoIndex.value = currentIndex + 1
         }
     }
-    
-    // Passer à la photo précédente en mode plein écran
+
+    /**
+     * Passe à la photo précédente en mode plein écran
+     */
     fun previousFullscreenPhoto() {
         val currentIndex = _fullscreenPhotoIndex.value
-        val photosSize = _photos.value.size
-        
-        if (photosSize > 0) {
-            // Passer à la photo précédente avec retour à la fin si on est au début
-            val prevIndex = (currentIndex - 1 + photosSize) % photosSize
-            setFullscreenPhotoIndex(prevIndex)
+        if (currentIndex > 0) {
+            _fullscreenPhotoIndex.value = currentIndex - 1
         }
     }
-    
-    // Obtenir l'index de la photo correspondant à un modèle PhotoModel
+
+    /**
+     * Obtient l'index d'une photo dans la liste des photos
+     */
     fun getPhotoIndex(photo: PhotoModel): Int {
         return _photos.value.indexOf(photo)
     }
 
-    // Réinitialiser l'état wasInFullscreenMode
+    /**
+     * Indique qu'on vient du mode plein écran
+     */
+    fun setWasInFullscreenMode(wasInFullscreen: Boolean) {
+        _wasInFullscreenMode.value = wasInFullscreen
+    }
+
+    /**
+     * Réinitialise l'état indiquant qu'on vient du mode plein écran
+     */
     fun resetWasInFullscreenMode() {
         _wasInFullscreenMode.value = false
     }
-    
-    // Mémoriser que l'on vient du mode plein écran
-    fun setWasInFullscreenMode(value: Boolean) {
-        _wasInFullscreenMode.value = value
+
+    /**
+     * Met à jour la photo sélectionnée après un renommage
+     */
+    fun updateSelectedPhotoAfterRename(newPhoto: PhotoModel) {
+        _selectedPhoto.value = newPhoto
     }
 }
