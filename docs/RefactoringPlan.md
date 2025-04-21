@@ -30,11 +30,17 @@ Le code actuel présente plusieurs opportunités d'amélioration :
     - Déplacer les fonctions de création des dossiers ✓
     - Déplacer les fonctions de vérification et de navigation ✓
   - *Étape 2.5* : Adapter le `PhotosViewModel` pour utiliser ces nouvelles classes ✓
-  - *Étape 2.6* : Tests et validation des modifications
+  - *Étape 2.6* : Tests et validation des modifications ✓
 
 ### Phase 3 : Architecture améliorée
 - **Implémentation du Repository Pattern** : Créer une couche d'abstraction `PhotoRepository` pour l'accès aux données
+  - *Étape 3.1* : Définir les interfaces des Repository
+  - *Étape 3.2* : Créer les implémentations concrètes des Repository
+  - *Étape 3.3* : Adapter les classes Manager existantes
 - **Refactorisation des callbacks en Flow** : Moderniser la gestion asynchrone avec Kotlin Flow
+  - *Étape 3.4* : Convertir les callbacks en Flows
+  - *Étape 3.5* : Adapter le ViewModel
+  - *Étape 3.6* : Tests et validation
 
 ### Phase 4 : Qualité et maintenance
 - **Documentation complète** : Améliorer les commentaires et la documentation
@@ -44,7 +50,7 @@ Le code actuel présente plusieurs opportunités d'amélioration :
 
 - [x] Début du plan : 21 avril 2025
 - [x] Phase 1 complétée
-- [ ] Phase 2 complétée  
+- [x] Phase 2 complétée  
   - [x] Étape 2.1 : Création de `PhotoPaginator` pour la pagination
   - [x] Étape 2.2 : Extension vers `PhotoManager` complet
   - [x] Étape 2.3 : Suppression de `PhotoPaginator` (obsolète)
@@ -52,4 +58,10 @@ Le code actuel présente plusieurs opportunités d'amélioration :
   - [x] Étape 2.5 : Adaptation du `PhotosViewModel`
   - [x] Étape 2.6 : Tests et validation
 - [ ] Phase 3 complétée
+  - [ ] Étape 3.1 : Définir les interfaces des Repository
+  - [ ] Étape 3.2 : Créer les implémentations concrètes
+  - [ ] Étape 3.3 : Adapter les classes Manager existantes
+  - [ ] Étape 3.4* : Convertir les callbacks en Flows
+  - [ ] Étape 3.5 : Adapter le ViewModel
+  - [ ] Étape 3.6 : Tests et validation
 - [ ] Phase 4 complétée
