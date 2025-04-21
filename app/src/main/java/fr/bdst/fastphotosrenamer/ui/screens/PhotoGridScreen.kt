@@ -106,8 +106,9 @@ fun PhotoItem(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            // Utiliser uniquement pointerInput pour gérer à la fois le clic simple et le clic long
-            .pointerInput(Unit) {
+            // Utiliser photo.path comme clé du pointerInput pour forcer sa recomposition
+            // quand la photo ou le répertoire change
+            .pointerInput(key1 = photo.path) {
                 detectTapGestures(
                     onTap = { onClick() },
                     onLongPress = { onFullscreen() }

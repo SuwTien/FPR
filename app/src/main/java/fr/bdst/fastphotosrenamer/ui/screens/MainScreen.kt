@@ -82,7 +82,19 @@ fun MainScreen(
     
     // Effet pour recharger les photos quand le dossier change
     LaunchedEffect(currentFolder) {
+        // Recharger les photos du nouveau dossier
         viewModel.loadPhotosFromFolder(context, currentFolder)
+        
+        // Sécurité supplémentaire : si une photo était sélectionnée, vérifier si elle est toujours valide
+        // dans le nouveau répertoire, sinon effacer la sélection
+        val currentSelectedPhoto = selectedPhoto // Capture locale de la valeur
+        if (currentSelectedPhoto != null) {
+            val photoIndex = viewModel.getPhotoIndex(currentSelectedPhoto)
+            if (photoIndex == -1) {
+                // La photo sélectionnée n'existe pas dans le nouveau répertoire
+                viewModel.clearSelectedPhoto()
+            }
+        }
     }
     
     // Effet pour ouvrir automatiquement le menu déroulant après la création d'un dossier
