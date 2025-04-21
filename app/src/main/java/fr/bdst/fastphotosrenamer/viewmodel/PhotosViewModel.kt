@@ -72,6 +72,16 @@ class PhotosViewModel : ViewModel() {
     val wasInFullscreenMode: Boolean
         get() = _wasInFullscreenMode.value
 
+    // Nouveaux états pour la pagination
+    private val _currentPage = MutableStateFlow(0)
+    val currentPage: StateFlow<Int> = _currentPage
+
+    private val _hasMorePhotos = MutableStateFlow(false)
+    val hasMorePhotos: StateFlow<Boolean> = _hasMorePhotos
+    
+    private val _isLoadingMore = MutableStateFlow(false)
+    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore
+
     companion object {
         const val APP_FOLDER_NAME = "FPR"
     }
@@ -91,29 +101,79 @@ class PhotosViewModel : ViewModel() {
         }
     }
 
-    // Méthode pour charger les photos d'un dossier spécifique
-    fun loadPhotosFromFolder(context: Context, folderPath: String) {
+    // Méthode pour charger les photos d'un dossier avec pagination
+    fun loadPhotosFromFolderPaginated(context: Context, folderPath: String, reset: Boolean = true) {
         viewModelScope.launch {
-            _isLoading.value = true
-            
-            // Sauvegarder l'index de la photo en plein écran avant de charger les nouvelles photos
-            val savedFullscreenIndex = _fullscreenPhotoIndex.value
-            
-            // Si c'est le dossier DCIM/Camera, utilise la méthode spéciale
-            if (folderPath.endsWith("/DCIM/Camera")) {
-                _photos.value = getCameraPhotos(context)
+            if (reset) {
+                _isLoading.value = true
+                _currentPage.value = 0
+                _photos.value = emptyList()
             } else {
-                _photos.value = loadPhotosFromFolderSync(context, folderPath)
-            }
-
-            // Mettre à jour la photo sélectionnée même en mode plein écran
-            if (_fullscreenMode.value && savedFullscreenIndex < _photos.value.size) {
-                // Si on est en mode plein écran, essayer de restaurer l'index
-                _fullscreenPhotoIndex.value = savedFullscreenIndex
+                _isLoadingMore.value = true
             }
             
-            _isLoading.value = false
+            try {
+                // Sauvegarder l'index de la photo en plein écran
+                val savedFullscreenIndex = _fullscreenPhotoIndex.value
+                
+                // Calculer l'offset pour le chargement paginé
+                val offset = _currentPage.value * fr.bdst.fastphotosrenamer.utils.PhotoPaginator.PAGE_SIZE
+                
+                // Charger une page de photos
+                val (newPhotos, hasMore) = fr.bdst.fastphotosrenamer.utils.PhotoPaginator.loadPhotosPageFromFolder(
+                    context,
+                    folderPath,
+                    offset,
+                    fr.bdst.fastphotosrenamer.utils.PhotoPaginator.PAGE_SIZE
+                )
+                
+                // Mettre à jour l'état
+                if (reset) {
+                    _photos.value = newPhotos
+                } else {
+                    _photos.value = _photos.value + newPhotos
+                }
+                
+                _hasMorePhotos.value = hasMore
+                
+                // Incrémenter la page pour le prochain chargement
+                if (hasMore) {
+                    _currentPage.value = _currentPage.value + 1
+                }
+                
+                // Restaurer l'index en plein écran si nécessaire
+                if (_fullscreenMode.value && savedFullscreenIndex < _photos.value.size) {
+                    _fullscreenPhotoIndex.value = savedFullscreenIndex
+                }
+            } catch (e: Exception) {
+                // En cas d'erreur, s'assurer qu'on a au moins une liste vide
+                if (reset) {
+                    _photos.value = emptyList()
+                }
+                android.util.Log.e("FPR_DEBUG", "Erreur de chargement: ${e.message}")
+            } finally {
+                if (reset) {
+                    _isLoading.value = false
+                } else {
+                    _isLoadingMore.value = false
+                }
+            }
         }
+    }
+    
+    // Méthode pour charger la page suivante
+    fun loadMorePhotos(context: Context) {
+        if (_isLoadingMore.value || !_hasMorePhotos.value) {
+            return // Ne rien faire si déjà en train de charger ou s'il n'y a plus de photos
+        }
+        
+        loadPhotosFromFolderPaginated(context, _currentFolder.value, false)
+    }
+
+    // Remplacer la méthode originale par la version paginée
+    fun loadPhotosFromFolder(context: Context, folderPath: String) {
+        // Réinitialiser et charger la première page
+        loadPhotosFromFolderPaginated(context, folderPath, true)
     }
 
     // Méthode pour charger la liste des dossiers disponibles
@@ -294,66 +354,49 @@ class PhotosViewModel : ViewModel() {
     
     // FONCTION 1: Chargement des photos selon le contexte (dossier spécifique ou DCIM/Camera)
     fun loadPhotos(context: Context) {
-        // Si un dossier spécifique est sélectionné et qu'on n'est pas en mode carte SD
-        if (_currentFolder.value.isNotEmpty() && !_useSDCard.value) {
+        val dcimFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
+        val cameraFolder = File(dcimFolder, "Camera")
+        
+        // Si on est en mode carte SD (désactivé selon le commentaire)
+        if (_useSDCard.value) {
+            // La gestion de carte SD est désactivée, mais le code reste pour compatibilité
+            // On redirige simplement vers le dossier DCIM/Camera
+            loadPhotosFromFolder(context, cameraFolder.absolutePath)
+            return
+        }
+        
+        // Si un dossier spécifique est sélectionné
+        if (_currentFolder.value.isNotEmpty()) {
+            // Cas spécial pour DCIM/Camera (utiliser le chemin exact au lieu de la sélection)
+            val normalizedCurrentFolder = _currentFolder.value.replace('\\', '/')
+            if (normalizedCurrentFolder.contains("/DCIM/Camera") || normalizedCurrentFolder.endsWith("/DCIM/Camera")) {
+                android.util.Log.d("FPR_DEBUG", "Chargement spécifique DCIM/Camera")
+                loadPhotosFromFolder(context, cameraFolder.absolutePath)
+                return
+            }
+            
+            // Pour les autres dossiers
             loadPhotosFromFolder(context, _currentFolder.value)
             return
         }
         
-        // Sinon, utiliser le comportement existant (DCIM/Camera)
-        viewModelScope.launch {
-            try {
-                _isLoading.value = true
-                val photosList = mutableListOf<PhotoModel>()
-                val projection = arrayOf(
-                    MediaStore.Images.Media._ID,
-                    MediaStore.Images.Media.DISPLAY_NAME,
-                    MediaStore.Images.Media.DATA
-                )
-                
-                // Filtrer pour n'inclure QUE les photos du stockage interne dans DCIM/Camera
-                val selection = "${MediaStore.Images.Media.DATA} LIKE ? AND ${MediaStore.Images.Media.DATA} LIKE ?"
-                val selectionArgs = arrayOf("/storage/emulated/0/%", "%DCIM/Camera%")
-                
-                context.contentResolver.query(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    projection,
-                    selection,
-                    selectionArgs,
-                    "${MediaStore.Images.Media.DATE_ADDED} DESC"
-                )?.use { cursor ->
-                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                    val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-                    val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
-                    
-                    while (cursor.moveToNext()) {
-                        val id = cursor.getLong(idColumn).toString()
-                        val name = cursor.getString(nameColumn)
-                        val path = cursor.getString(dataColumn)
-                        val file = File(path)
-                        
-                        val uri = Uri.withAppendedPath(
-                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                            id
-                        )
-                        
-                        if (file.exists()) {
-                            photosList.add(PhotoModel(id, uri, name, path, file))
-                        }
-                    }
-                }
-                
-                _photos.value = photosList
-                
-                // Mettre à jour la photo sélectionnée
-                _selectedPhoto.value?.let { currentSelected -> 
-                    val updatedPhoto = photosList.find { it.uri == currentSelected.uri }
-                    _selectedPhoto.value = updatedPhoto
-                }
-                _isLoading.value = false
-            } catch (e: Exception) {
-                _isLoading.value = false
+        // Par défaut, charger DCIM/Camera
+        if (cameraFolder.exists() && cameraFolder.isDirectory) {
+            android.util.Log.d("FPR_DEBUG", "Chargement par défaut DCIM/Camera")
+            loadPhotosFromFolder(context, cameraFolder.absolutePath)
+            return
+        }
+        
+        // Fallback au dossier de l'application si DCIM/Camera n'existe pas
+        val appFolder = File(dcimFolder, APP_FOLDER_NAME)
+        if (appFolder.exists() && appFolder.isDirectory) {
+            loadPhotosFromFolder(context, appFolder.absolutePath)
+        } else {
+            // Créer le dossier s'il n'existe pas
+            if (!appFolder.exists()) {
+                appFolder.mkdirs()
             }
+            loadPhotosFromFolder(context, appFolder.absolutePath)
         }
     }
 
@@ -361,6 +404,10 @@ class PhotosViewModel : ViewModel() {
     fun loadPhotosFromSDCard(context: Context) {
         viewModelScope.launch {
             try {
+                _isLoading.value = true
+                _currentPage.value = 0 // Réinitialiser la pagination
+                _photos.value = emptyList() // Vider la liste actuelle
+                
                 val photosList = mutableListOf<PhotoModel>()
                 val projection = arrayOf(
                     MediaStore.Images.Media._ID,
@@ -374,6 +421,7 @@ class PhotosViewModel : ViewModel() {
                     // Pas de carte SD, revenir aux photos internes
                     Toast.makeText(context, "Aucune carte SD détectée", Toast.LENGTH_SHORT).show()
                     loadPhotos(context)
+                    _isLoading.value = false
                     return@launch
                 }
             
@@ -385,12 +433,17 @@ class PhotosViewModel : ViewModel() {
                 val selection = "${MediaStore.Images.Media.DATA} LIKE ? AND ${MediaStore.Images.Media.DATA} LIKE ? AND ${MediaStore.Images.Media.DATA} NOT LIKE ?"
                 val selectionArgs = arrayOf("$sdCardPath%", "%DCIM/Camera%", "/storage/emulated/0/%")
                 
+                // Limiter le résultat à PAGE_SIZE photos et utiliser un offset
+                val offset = _currentPage.value * fr.bdst.fastphotosrenamer.utils.PhotoPaginator.PAGE_SIZE
+                val limit = fr.bdst.fastphotosrenamer.utils.PhotoPaginator.PAGE_SIZE
+                val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC LIMIT $limit OFFSET $offset"
+                
                 context.contentResolver.query(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     projection,
                     selection,
                     selectionArgs,
-                    "${MediaStore.Images.Media.DATE_ADDED} DESC"
+                    sortOrder
                 )?.use { cursor ->
                     val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
                     val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
@@ -400,28 +453,64 @@ class PhotosViewModel : ViewModel() {
                         val id = cursor.getLong(idColumn).toString()
                         val name = cursor.getString(nameColumn)
                         val path = cursor.getString(dataColumn)
+                        
+                        // Ignorer les fichiers "trashed"
+                        if (isTrashFile(name)) continue
+                        
                         val file = File(path)
-                    
+                        
+                        // Vérifier que le fichier existe réellement
+                        if (!file.exists() || file.length() == 0L) continue
+                        
                         val uri = Uri.withAppendedPath(
                             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                             id
                         )
                     
-                        if (file.exists()) {
-                            photosList.add(PhotoModel(id, uri, name, path, file))
-                        }
+                        photosList.add(PhotoModel(id, uri, name, path, file))
                     }
                 }
-            
+                
+                // Vérifier s'il y a plus de photos
+                val countCursor = context.contentResolver.query(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    arrayOf("count(*) AS count"),
+                    selection,
+                    selectionArgs,
+                    null
+                )
+                
+                val totalCount = countCursor?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        cursor.getInt(0)
+                    } else {
+                        0
+                    }
+                } ?: 0
+                
+                countCursor?.close()
+                
+                // Mettre à jour l'état
                 _photos.value = photosList
+                _hasMorePhotos.value = totalCount > offset + photosList.size
+                
+                // Incrémenter la page pour le prochain chargement
+                if (_hasMorePhotos.value) {
+                    _currentPage.value = _currentPage.value + 1
+                }
             
                 // Mettre à jour la photo sélectionnée
                 _selectedPhoto.value?.let { currentSelected -> 
                     val updatedPhoto = photosList.find { it.uri == currentSelected.uri }
                     _selectedPhoto.value = updatedPhoto
                 }
+                
+                _isLoading.value = false
             } catch (e: Exception) {
                 // Si erreur, revenir aux photos internes
+                _isLoading.value = false
+                _photos.value = emptyList()
+                android.util.Log.e("FPR_DEBUG", "Erreur de chargement depuis la carte SD: ${e.message}")
                 loadPhotos(context)
             }
         }
@@ -430,14 +519,24 @@ class PhotosViewModel : ViewModel() {
     fun selectPhoto(photo: PhotoModel) {
         android.util.Log.d("FPR_DEBUG", "Photo sélectionnée: ${photo.name}, path: ${photo.path}")
         
-        // Si une photo différente est déjà sélectionnée, l'afficher dans les logs
-        _selectedPhoto.value?.let { current ->
-            if (current.path != photo.path) {
-                android.util.Log.d("FPR_DEBUG", "Photo différente de la sélection précédente: ${current.name}")
-            }
-        }
+        // Vérifier d'abord si la photo existe dans la liste actuelle des photos
+        val photoIndex = _photos.value.indexOf(photo)
         
-        _selectedPhoto.value = photo
+        if (photoIndex != -1) {
+            // La photo existe dans la liste courante des photos, on peut la sélectionner en toute sécurité
+            _selectedPhoto.value = _photos.value[photoIndex]  // Utiliser la référence de la liste actuelle
+            android.util.Log.d("FPR_DEBUG", "Photo trouvée dans la liste actuelle à l'index $photoIndex")
+        } else {
+            // La photo n'est pas dans la liste actuelle des photos
+            // Cela peut arriver lors d'un changement de répertoire
+            android.util.Log.d("FPR_DEBUG", "Photo non trouvée dans la liste actuelle, ignorer la sélection")
+            
+            // On ne met pas à jour _selectedPhoto.value pour éviter d'avoir une référence à une photo d'un autre dossier
+            // On pourrait afficher un message Toast à l'utilisateur, mais ce n'est pas nécessaire car l'UI sera simplement rafraîchie
+            
+            // S'assurer qu'aucune photo n'est sélectionnée
+            _selectedPhoto.value = null
+        }
     }
     
     fun clearSelectedPhoto() {

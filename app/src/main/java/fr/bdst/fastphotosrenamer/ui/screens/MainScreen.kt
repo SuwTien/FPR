@@ -84,6 +84,11 @@ fun MainScreen(
     val availableFolders by viewModel.availableFolders.collectAsStateWithLifecycle(initialValue = emptyList())
     val shouldOpenFolderDropdown by viewModel.shouldOpenFolderDropdown.collectAsStateWithLifecycle(initialValue = false)
     
+    // États pour le chargement paginé
+    val isLoading by viewModel.isLoading.collectAsStateWithLifecycle(initialValue = false)
+    val isLoadingMore by viewModel.isLoadingMore.collectAsStateWithLifecycle(initialValue = false)
+    val hasMorePhotos by viewModel.hasMorePhotos.collectAsStateWithLifecycle(initialValue = false)
+    
     // Nouveaux états pour le mode plein écran
     val fullscreenMode by viewModel.fullscreenMode.collectAsStateWithLifecycle(initialValue = false)
     val fullscreenPhotoIndex by viewModel.fullscreenPhotoIndex.collectAsStateWithLifecycle(initialValue = 0)
@@ -294,6 +299,10 @@ fun MainScreen(
                     }
                 },
                 showImages = showImages,
+                isLoading = isLoading,
+                isLoadingMore = isLoadingMore,
+                hasMorePhotos = hasMorePhotos,
+                onLoadMore = { viewModel.loadMorePhotos(context) },
                 modifier = Modifier.padding(paddingValues)
             )
         }

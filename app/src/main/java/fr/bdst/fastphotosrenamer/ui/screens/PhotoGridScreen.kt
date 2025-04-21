@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -44,6 +45,10 @@ fun PhotoGridScreen(
     onPhotoClick: (PhotoModel) -> Unit,
     onPhotoZoom: (PhotoModel) -> Unit,
     showImages: Boolean = true,
+    isLoading: Boolean = false,
+    isLoadingMore: Boolean = false,
+    hasMorePhotos: Boolean = false,
+    onLoadMore: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     if (showImages) {
@@ -61,6 +66,36 @@ fun PhotoGridScreen(
                     onFullscreen = { onPhotoZoom(photo) },
                     showImage = true
                 )
+            }
+            
+            // Ajouter un indicateur de chargement ou un élément pour charger plus
+            if (photos.isNotEmpty()) {
+                item(span = { GridItemSpan(3) }) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            isLoadingMore -> {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.size(36.dp),
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    strokeWidth = 3.dp
+                                )
+                            }
+                            hasMorePhotos -> {
+                                androidx.compose.material3.Button(
+                                    onClick = onLoadMore,
+                                    modifier = Modifier.padding(8.dp)
+                                ) {
+                                    Text("Charger plus de photos")
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     } else {
@@ -91,6 +126,43 @@ fun PhotoGridScreen(
                         .clickable { onPhotoClick(photo) }
                 )
             }
+            
+            // Ajouter un indicateur de chargement ou un élément pour charger plus
+            if (photos.isNotEmpty()) {
+                item {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        when {
+                            isLoadingMore -> {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.size(36.dp),
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    strokeWidth = 3.dp
+                                )
+                            }
+                            hasMorePhotos -> {
+                                androidx.compose.material3.Button(
+                                    onClick = onLoadMore,
+                                    modifier = Modifier.padding(8.dp)
+                                ) {
+                                    Text("Charger plus de photos")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Afficher un indicateur de chargement initial centré si on charge pour la première fois
+    if (isLoading && photos.isEmpty()) {
+        Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+            androidx.compose.material3.CircularProgressIndicator()
         }
     }
 }
