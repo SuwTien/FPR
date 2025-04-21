@@ -11,6 +11,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.bdst.fastphotosrenamer.model.PhotoModel
+import fr.bdst.fastphotosrenamer.storage.FolderManager
 import fr.bdst.fastphotosrenamer.storage.PhotoManager
 import fr.bdst.fastphotosrenamer.storage.PhotoRenamer
 import fr.bdst.fastphotosrenamer.utils.FilePathUtils
@@ -28,19 +29,14 @@ class PhotosViewModel : ViewModel() {
     private val _selectedPhoto = MutableStateFlow<PhotoModel?>(null)
     val selectedPhoto: StateFlow<PhotoModel?> = _selectedPhoto
 
-    // Accès à l'état du PhotoManager
+    // Accès aux états des gestionnaires
     val isRenameOperationInProgress = PhotoManager.isRenameOperationInProgress
+    val availableFolders = FolderManager.availableFolders
+    val shouldOpenFolderDropdown = FolderManager.shouldOpenFolderDropdown
 
     // Variables d'état pour les dossiers
     private val _currentFolder = MutableStateFlow<String>("")
     val currentFolder: StateFlow<String> = _currentFolder
-
-    private val _availableFolders = MutableStateFlow<List<String>>(emptyList())
-    val availableFolders: StateFlow<List<String>> = _availableFolders
-
-    // Nouvel état pour contrôler l'ouverture du menu déroulant des dossiers
-    private val _shouldOpenFolderDropdown = MutableStateFlow(false)
-    val shouldOpenFolderDropdown: StateFlow<Boolean> = _shouldOpenFolderDropdown
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
@@ -70,18 +66,8 @@ class PhotosViewModel : ViewModel() {
 
     // Initialiser le dossier courant dans init {}
     init {
-        val cameraFolderPath = FilePathUtils.getCameraFolderPath()
-        val cameraFolder = File(cameraFolderPath)
-        
-        if (cameraFolder.exists() && cameraFolder.isDirectory) {
-            _currentFolder.value = cameraFolderPath
-        } else {
-            // Fallback au dossier FPR si Camera n'existe pas
-            val appFolderPath = FilePathUtils.getAppFolderPath()
-            val appFolder = File(appFolderPath)
-            _currentFolder.value = if (appFolder.exists()) appFolderPath 
-                                   else Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).absolutePath
-        }
+        // Utiliser FolderManager pour obtenir le dossier par défaut
+        _currentFolder.value = FolderManager.getDefaultFolder()
     }
 
     // Méthode pour charger les photos d'un dossier avec pagination
@@ -159,41 +145,10 @@ class PhotosViewModel : ViewModel() {
         loadPhotosFromFolderPaginated(context, folderPath, true)
     }
 
-    // Méthode pour charger la liste des dossiers disponibles
+    // Méthode pour charger la liste des dossiers disponibles - utilise FolderManager
     fun loadAvailableFolders(context: Context) {
         viewModelScope.launch {
-            val folders = mutableListOf<String>()
-            
-            // 1. Ajouter DCIM/Camera en premier (dossier par défaut)
-            val cameraFolderPath = FilePathUtils.getCameraFolderPath()
-            val cameraFolder = File(cameraFolderPath)
-            if (cameraFolder.exists() && cameraFolder.isDirectory) {
-                folders.add(cameraFolderPath)
-            }
-            
-            // 2. Ajouter les sous-dossiers de FPR
-            val appFolderPath = FilePathUtils.getAppFolderPath()
-            val appFolder = File(appFolderPath)
-            if (!appFolder.exists()) {
-                appFolder.mkdir()
-            }
-            
-            // Collecte tous les sous-dossiers avec leur timestamp de dernière modification
-            val foldersWithTimestamp = mutableListOf<Pair<String, Long>>()
-            
-            appFolder.listFiles()?.filter { it.isDirectory }?.forEach {
-                foldersWithTimestamp.add(Pair(it.absolutePath, it.lastModified()))
-            }
-            
-            // Tri des dossiers par date de dernière modification (du plus récent au plus ancien)
-            val sortedFolders = foldersWithTimestamp.sortedByDescending { it.second }
-            
-            // Ajouter DCIM/Camera en premier, puis les autres dossiers triés
-            if (cameraFolder.exists() && cameraFolder.isDirectory) {
-                _availableFolders.value = listOf(cameraFolderPath) + sortedFolders.map { it.first }
-            } else {
-                _availableFolders.value = sortedFolders.map { it.first }
-            }
+            FolderManager.loadAvailableFolders(context)
         }
     }
 
@@ -202,70 +157,38 @@ class PhotosViewModel : ViewModel() {
         _currentFolder.value = folderPath
     }
 
-    // Méthode pour créer un nouveau dossier
+    // Méthode pour créer un nouveau dossier - utilise FolderManager
     fun createNewFolder(context: Context, folderName: String) {
         viewModelScope.launch {
-            try {
-                // Toujours créer dans DCIM/FPR
-                val appFolderPath = FilePathUtils.getAppFolderPath()
-                val appFolder = File(appFolderPath)
-                
-                // S'assurer que le dossier parent existe
-                if (!appFolder.exists()) {
-                    appFolder.mkdir()
-                }
-                
-                // Créer le nouveau dossier dans FPR
-                val newFolder = File(appFolder, folderName)
-                
-                // Vérifier si le dossier existe déjà
-                if (newFolder.exists()) {
-                    Toast.makeText(context, "Ce dossier existe déjà", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
-                
-                // Créer le dossier
-                if (newFolder.mkdir()) {
-                    // Recharger la liste des dossiers
-                    loadAvailableFolders(context)
-                    
-                    // Stockage temporaire du nouveau dossier créé
-                    val newlyCreatedFolder = newFolder.absolutePath
-                    
-                    // Trouver et définir DCIM/Camera comme dossier courant
-                    val cameraFolderPath = FilePathUtils.getCameraFolderPath()
-                    val cameraFolder = File(cameraFolderPath)
-                    if (cameraFolder.exists() && cameraFolder.isDirectory) {
-                        _currentFolder.value = cameraFolderPath
-                        // Charger les photos du dossier DCIM/Camera
-                        loadPhotosFromFolder(context, cameraFolderPath)
-                    } else {
-                        // Si DCIM/Camera n'existe pas, rester dans le dossier actuel
-                        _currentFolder.value = newlyCreatedFolder
-                        loadPhotosFromFolder(context, newlyCreatedFolder)
-                    }
-                    
-                    // Indiquer qu'il faut ouvrir le menu déroulant pour montrer le nouveau dossier
-                    setShouldOpenFolderDropdown(true)
-                    
-                    Toast.makeText(context, "Dossier créé: $folderName", Toast.LENGTH_SHORT).show()
+            // Utiliser FolderManager pour créer le dossier
+            val newFolderPath = FolderManager.createNewFolder(context, folderName)
+            
+            if (newFolderPath != null) {
+                // Trouver et définir DCIM/Camera comme dossier courant
+                val cameraFolderPath = FilePathUtils.getCameraFolderPath()
+                if (FolderManager.folderExists(cameraFolderPath)) {
+                    _currentFolder.value = cameraFolderPath
+                    loadPhotosFromFolder(context, cameraFolderPath)
                 } else {
-                    Toast.makeText(context, "Impossible de créer le dossier", Toast.LENGTH_SHORT).show()
+                    // Si DCIM/Camera n'existe pas, utiliser le dossier nouvellement créé
+                    _currentFolder.value = newFolderPath
+                    loadPhotosFromFolder(context, newFolderPath)
                 }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Erreur: ${e.message}", Toast.LENGTH_SHORT).show()
+                
+                // Indiquer qu'il faut ouvrir le menu déroulant pour montrer le nouveau dossier
+                FolderManager.setShouldOpenFolderDropdown(true)
             }
         }
     }
     
-    // Méthode pour définir l'état d'ouverture du menu déroulant
+    // Méthode pour définir l'état d'ouverture du menu déroulant - utilise FolderManager
     fun setShouldOpenFolderDropdown(shouldOpen: Boolean) {
-        _shouldOpenFolderDropdown.value = shouldOpen
+        FolderManager.setShouldOpenFolderDropdown(shouldOpen)
     }
     
-    // Méthode pour réinitialiser l'état d'ouverture du menu déroulant
+    // Méthode pour réinitialiser l'état d'ouverture du menu déroulant - utilise FolderManager
     fun resetShouldOpenFolderDropdown() {
-        _shouldOpenFolderDropdown.value = false
+        FolderManager.resetShouldOpenFolderDropdown()
     }
     
     // FONCTION 1: Chargement des photos selon le contexte (dossier spécifique ou DCIM/Camera)

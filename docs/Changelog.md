@@ -1,6 +1,6 @@
 # Changelog FastPhotosRenamer
 
-## 21 avril 2025 - Refactorisation Phase 2.2
+## 21 avril 2025 - Refactorisation Phase 2
 
 ### Ajouts
 - Création de la classe `PhotoManager` dans le package `storage` qui centralise toutes les opérations liées aux photos
@@ -10,16 +10,22 @@
   - Utilisation des coroutines Kotlin pour les opérations asynchrones
   - Callbacks pour informer des résultats des opérations
 
+- Création de la classe `FolderManager` dans le package `storage` qui centralise toutes les opérations liées aux dossiers
+  - Gestion du chargement de la liste des dossiers disponibles
+  - Fonctions de création de dossiers
+  - Fonctions de vérification et de navigation des dossiers
+  - Utilisation des coroutines Kotlin pour les opérations asynchrones
+
 ### Modifications
-- Refactorisation du `PhotosViewModel` pour déléguer les opérations au `PhotoManager`
+- Refactorisation du `PhotosViewModel` pour déléguer les opérations au `PhotoManager` et au `FolderManager`
   - Réduction du couplage et meilleure séparation des responsabilités
-  - Simplification des méthodes en remplaçant le code direct par des appels au `PhotoManager`
+  - Simplification des méthodes en remplaçant le code direct par des appels aux managers
   - Conservation de la gestion de l'état de l'application (UI state) dans le ViewModel
 
-### Suppressions prévues
-- Le fichier `PhotoPaginator.kt` sera supprimé car ses fonctionnalités sont intégrées dans `PhotoManager`
+### Suppressions
+- Le fichier `PhotoPaginator.kt` a été supprimé car ses fonctionnalités sont intégrées dans `PhotoManager`
 
 ### Prochaines étapes
-- Implémenter un `FolderManager` pour gérer les opérations liées aux dossiers
-- Adapter le `PhotosViewModel` pour utiliser le `FolderManager`
-- Valider le fonctionnement de l'application après ces refactorisations
+- Tester l'application après ces refactorisations pour s'assurer qu'il n'y a pas de régressions
+- Implémenter le Repository Pattern pour améliorer davantage l'architecture
+- Moderniser la gestion asynchrone avec Kotlin Flow

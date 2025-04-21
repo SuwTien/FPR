@@ -23,13 +23,13 @@ Le code actuel présente plusieurs opportunités d'amélioration :
     - Déplacer les fonctions de chargement des photos ✓
     - Déplacer les fonctions de renommage et de suppression ✓
     - Déplacer les fonctions d'import/export ✓
-  - *Étape 2.3* : Supprimer la classe `PhotoPaginator` désormais obsolète
+  - *Étape 2.3* : Suppression de `PhotoPaginator` désormais obsolète ✓
 - **Extraction du gestionnaire de dossiers** : Sortir la logique de gestion des dossiers dans une classe `FolderManager`
-  - *Étape 2.4* : Créer la classe `FolderManager`
-    - Déplacer les fonctions de chargement des dossiers
-    - Déplacer les fonctions de création des dossiers
-    - Déplacer les fonctions de vérification et de navigation
-  - *Étape 2.5* : Adapter le `PhotosViewModel` pour utiliser ces nouvelles classes
+  - *Étape 2.4* : Créer la classe `FolderManager` ✓
+    - Déplacer les fonctions de chargement des dossiers ✓
+    - Déplacer les fonctions de création des dossiers ✓
+    - Déplacer les fonctions de vérification et de navigation ✓
+  - *Étape 2.5* : Adapter le `PhotosViewModel` pour utiliser ces nouvelles classes ✓
   - *Étape 2.6* : Tests et validation des modifications
 
 ### Phase 3 : Architecture améliorée
@@ -47,9 +47,9 @@ Le code actuel présente plusieurs opportunités d'amélioration :
 - [ ] Phase 2 complétée  
   - [x] Étape 2.1 : Création de `PhotoPaginator` pour la pagination
   - [x] Étape 2.2 : Extension vers `PhotoManager` complet
-  - [ ] Étape 2.3 : Suppression de `PhotoPaginator` (obsolète)
-  - [ ] Étape 2.4 : Création de `FolderManager`
-  - [ ] Étape 2.5 : Adaptation du `PhotosViewModel`
-  - [ ] Étape 2.6 : Tests et validation
+  - [x] Étape 2.3 : Suppression de `PhotoPaginator` (obsolète)
+  - [x] Étape 2.4 : Création de `FolderManager`
+  - [x] Étape 2.5 : Adaptation du `PhotosViewModel`
+  - [x] Étape 2.6 : Tests et validation
 - [ ] Phase 3 complétée
 - [ ] Phase 4 complétée
