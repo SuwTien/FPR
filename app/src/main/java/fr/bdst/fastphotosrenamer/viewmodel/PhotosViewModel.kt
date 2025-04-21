@@ -15,6 +15,7 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import fr.bdst.fastphotosrenamer.model.PhotoModel
+import fr.bdst.fastphotosrenamer.utils.FilePathUtils
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,7 +24,6 @@ import java.io.File
 import android.Manifest
 import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
-import androidx.documentfile.provider.DocumentFile
 import fr.bdst.fastphotosrenamer.storage.PhotoRenamer
 import android.content.ContentUris
 import java.nio.file.Files
@@ -41,9 +41,6 @@ class PhotosViewModel : ViewModel() {
 
     private val _isRenameOperationInProgress = MutableStateFlow(false)
     val isRenameOperationInProgress: StateFlow<Boolean> = _isRenameOperationInProgress
-
-    private val _useSDCard = MutableStateFlow(false)
-    val useSDCard: StateFlow<Boolean> = _useSDCard
 
     // Variables d'état pour les dossiers
     private val _currentFolder = MutableStateFlow<String>("")
@@ -82,22 +79,19 @@ class PhotosViewModel : ViewModel() {
     private val _isLoadingMore = MutableStateFlow(false)
     val isLoadingMore: StateFlow<Boolean> = _isLoadingMore
 
-    companion object {
-        const val APP_FOLDER_NAME = "FPR"
-    }
-
     // Initialiser le dossier courant dans init {}
     init {
-        val dcimFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
-        val cameraFolder = File(dcimFolder, "Camera")
+        val cameraFolderPath = FilePathUtils.getCameraFolderPath()
+        val cameraFolder = File(cameraFolderPath)
         
         if (cameraFolder.exists() && cameraFolder.isDirectory) {
-            _currentFolder.value = cameraFolder.absolutePath
+            _currentFolder.value = cameraFolderPath
         } else {
             // Fallback au dossier FPR si Camera n'existe pas
-            val appFolder = File(dcimFolder, APP_FOLDER_NAME)
-            _currentFolder.value = if (appFolder.exists()) appFolder.absolutePath 
-                                   else dcimFolder.absolutePath
+            val appFolderPath = FilePathUtils.getAppFolderPath()
+            val appFolder = File(appFolderPath)
+            _currentFolder.value = if (appFolder.exists()) appFolderPath 
+                                   else Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM).absolutePath
         }
     }
 
@@ -182,14 +176,15 @@ class PhotosViewModel : ViewModel() {
             val folders = mutableListOf<String>()
             
             // 1. Ajouter DCIM/Camera en premier (dossier par défaut)
-            val dcimFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
-            val cameraFolder = File(dcimFolder, "Camera")
+            val cameraFolderPath = FilePathUtils.getCameraFolderPath()
+            val cameraFolder = File(cameraFolderPath)
             if (cameraFolder.exists() && cameraFolder.isDirectory) {
-                folders.add(cameraFolder.absolutePath)
+                folders.add(cameraFolderPath)
             }
             
             // 2. Ajouter les sous-dossiers de FPR
-            val appFolder = File(dcimFolder, APP_FOLDER_NAME)
+            val appFolderPath = FilePathUtils.getAppFolderPath()
+            val appFolder = File(appFolderPath)
             if (!appFolder.exists()) {
                 appFolder.mkdir()
             }
@@ -206,65 +201,11 @@ class PhotosViewModel : ViewModel() {
             
             // Ajouter DCIM/Camera en premier, puis les autres dossiers triés
             if (cameraFolder.exists() && cameraFolder.isDirectory) {
-                _availableFolders.value = listOf(cameraFolder.absolutePath) + sortedFolders.map { it.first }
+                _availableFolders.value = listOf(cameraFolderPath) + sortedFolders.map { it.first }
             } else {
                 _availableFolders.value = sortedFolders.map { it.first }
             }
         }
-    }
-
-    // Méthode pour charger les photos d'un dossier (implémentation synchrone)
-    private fun loadPhotosFromFolderSync(context: Context, folderPath: String): List<PhotoModel> {
-        val photosList = mutableListOf<PhotoModel>()
-        val folder = File(folderPath)
-        
-        if (!folder.exists() || !folder.isDirectory) {
-            return emptyList()
-        }
-        
-        // Vérification spéciale pour DCIM/Camera
-        val isCameraFolder = folderPath.endsWith("/DCIM/Camera")
-        
-        if (isCameraFolder) {
-            // POUR DCIM/CAMERA: Utiliser uniquement le système de fichiers direct
-            folder.listFiles()?.filter { file -> 
-                file.isFile && 
-                isImageFile(file.name) &&
-                !isTrashFile(file.name) &&
-                file.length() > 0  // Ignorer les fichiers vides
-            }?.forEach { file ->
-                try {
-                    photosList.add(PhotoModel(
-                        id = file.absolutePath.hashCode().toString(),
-                        uri = Uri.fromFile(file),
-                        name = file.name,
-                        path = file.absolutePath,
-                        file = file
-                     ))
-                } catch (e: Exception) {
-                }
-            }
-        } else {
-            // POUR LES AUTRES DOSSIERS: Le code original
-            folder.listFiles()?.filter { 
-                it.isFile && 
-                isImageFile(it.name) &&
-                !isTrashFile(it.name)
-            }?.forEach { file ->
-                try {
-                    photosList.add(PhotoModel(
-                        id = file.absolutePath.hashCode().toString(),
-                        uri = Uri.fromFile(file),
-                        name = file.name,
-                        path = file.absolutePath,
-                        file = file
-                    ))
-                } catch (e: Exception) {
-                }
-            }
-        }
-        
-        return photosList.sortedByDescending { it.path }
     }
 
     // Méthode pour définir le dossier courant
@@ -277,8 +218,8 @@ class PhotosViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 // Toujours créer dans DCIM/FPR
-                val dcimFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
-                val appFolder = File(dcimFolder, APP_FOLDER_NAME)
+                val appFolderPath = FilePathUtils.getAppFolderPath()
+                val appFolder = File(appFolderPath)
                 
                 // S'assurer que le dossier parent existe
                 if (!appFolder.exists()) {
@@ -303,11 +244,12 @@ class PhotosViewModel : ViewModel() {
                     val newlyCreatedFolder = newFolder.absolutePath
                     
                     // Trouver et définir DCIM/Camera comme dossier courant
-                    val cameraFolder = File(dcimFolder, "Camera")
+                    val cameraFolderPath = FilePathUtils.getCameraFolderPath()
+                    val cameraFolder = File(cameraFolderPath)
                     if (cameraFolder.exists() && cameraFolder.isDirectory) {
-                        _currentFolder.value = cameraFolder.absolutePath
+                        _currentFolder.value = cameraFolderPath
                         // Charger les photos du dossier DCIM/Camera
-                        loadPhotosFromFolder(context, cameraFolder.absolutePath)
+                        loadPhotosFromFolder(context, cameraFolderPath)
                     } else {
                         // Si DCIM/Camera n'existe pas, rester dans le dossier actuel
                         _currentFolder.value = newlyCreatedFolder
@@ -336,42 +278,18 @@ class PhotosViewModel : ViewModel() {
     fun resetShouldOpenFolderDropdown() {
         _shouldOpenFolderDropdown.value = false
     }
-
-    // Méthode pour vérifier si un fichier est une image
-    private fun isImageFile(fileName: String): Boolean {
-        val extension = fileName.substringAfterLast(".", "").lowercase()
-        return extension in listOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
-    }
-    fun setUseSDCard(context: Context, value: Boolean) {
-        _useSDCard.value = value
-        if (value) {
-            loadPhotosFromSDCard(context)
-        } else {
-            loadPhotos(context)
-        }
-    }
-    
     
     // FONCTION 1: Chargement des photos selon le contexte (dossier spécifique ou DCIM/Camera)
     fun loadPhotos(context: Context) {
-        val dcimFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
-        val cameraFolder = File(dcimFolder, "Camera")
-        
-        // Si on est en mode carte SD (désactivé selon le commentaire)
-        if (_useSDCard.value) {
-            // La gestion de carte SD est désactivée, mais le code reste pour compatibilité
-            // On redirige simplement vers le dossier DCIM/Camera
-            loadPhotosFromFolder(context, cameraFolder.absolutePath)
-            return
-        }
+        val cameraFolderPath = FilePathUtils.getCameraFolderPath()
+        val cameraFolder = File(cameraFolderPath)
         
         // Si un dossier spécifique est sélectionné
         if (_currentFolder.value.isNotEmpty()) {
             // Cas spécial pour DCIM/Camera (utiliser le chemin exact au lieu de la sélection)
-            val normalizedCurrentFolder = _currentFolder.value.replace('\\', '/')
-            if (normalizedCurrentFolder.contains("/DCIM/Camera") || normalizedCurrentFolder.endsWith("/DCIM/Camera")) {
+            if (FilePathUtils.isCameraFolder(_currentFolder.value)) {
                 android.util.Log.d("FPR_DEBUG", "Chargement spécifique DCIM/Camera")
-                loadPhotosFromFolder(context, cameraFolder.absolutePath)
+                loadPhotosFromFolder(context, cameraFolderPath)
                 return
             }
             
@@ -383,136 +301,21 @@ class PhotosViewModel : ViewModel() {
         // Par défaut, charger DCIM/Camera
         if (cameraFolder.exists() && cameraFolder.isDirectory) {
             android.util.Log.d("FPR_DEBUG", "Chargement par défaut DCIM/Camera")
-            loadPhotosFromFolder(context, cameraFolder.absolutePath)
+            loadPhotosFromFolder(context, cameraFolderPath)
             return
         }
         
         // Fallback au dossier de l'application si DCIM/Camera n'existe pas
-        val appFolder = File(dcimFolder, APP_FOLDER_NAME)
+        val appFolderPath = FilePathUtils.getAppFolderPath()
+        val appFolder = File(appFolderPath)
         if (appFolder.exists() && appFolder.isDirectory) {
-            loadPhotosFromFolder(context, appFolder.absolutePath)
+            loadPhotosFromFolder(context, appFolderPath)
         } else {
             // Créer le dossier s'il n'existe pas
             if (!appFolder.exists()) {
                 appFolder.mkdirs()
             }
-            loadPhotosFromFolder(context, appFolder.absolutePath)
-        }
-    }
-
-    // FONCTION 2: Chargement des photos de la carte SD uniquement
-    fun loadPhotosFromSDCard(context: Context) {
-        viewModelScope.launch {
-            try {
-                _isLoading.value = true
-                _currentPage.value = 0 // Réinitialiser la pagination
-                _photos.value = emptyList() // Vider la liste actuelle
-                
-                val photosList = mutableListOf<PhotoModel>()
-                val projection = arrayOf(
-                    MediaStore.Images.Media._ID,
-                    MediaStore.Images.Media.DISPLAY_NAME,
-                    MediaStore.Images.Media.DATA
-                )
-            
-                // Obtenir le chemin de la carte SD
-                val externalDirs = context.getExternalFilesDirs(null)
-                if (externalDirs.size <= 1 || externalDirs[1] == null) {
-                    // Pas de carte SD, revenir aux photos internes
-                    Toast.makeText(context, "Aucune carte SD détectée", Toast.LENGTH_SHORT).show()
-                    loadPhotos(context)
-                    _isLoading.value = false
-                    return@launch
-                }
-            
-                // Construire un chemin partiel pour la carte SD
-                val sdCardPath = externalDirs[1].path.split("/Android")[0]
-            
-                // Filtrer pour les photos de DCIM/Camera sur la carte SD uniquement
-                // Exclure explicitement le stockage interne
-                val selection = "${MediaStore.Images.Media.DATA} LIKE ? AND ${MediaStore.Images.Media.DATA} LIKE ? AND ${MediaStore.Images.Media.DATA} NOT LIKE ?"
-                val selectionArgs = arrayOf("$sdCardPath%", "%DCIM/Camera%", "/storage/emulated/0/%")
-                
-                // Limiter le résultat à PAGE_SIZE photos et utiliser un offset
-                val offset = _currentPage.value * fr.bdst.fastphotosrenamer.utils.PhotoPaginator.PAGE_SIZE
-                val limit = fr.bdst.fastphotosrenamer.utils.PhotoPaginator.PAGE_SIZE
-                val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC LIMIT $limit OFFSET $offset"
-                
-                context.contentResolver.query(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    projection,
-                    selection,
-                    selectionArgs,
-                    sortOrder
-                )?.use { cursor ->
-                    val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-                    val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-                    val dataColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
-                
-                    while (cursor.moveToNext()) {
-                        val id = cursor.getLong(idColumn).toString()
-                        val name = cursor.getString(nameColumn)
-                        val path = cursor.getString(dataColumn)
-                        
-                        // Ignorer les fichiers "trashed"
-                        if (isTrashFile(name)) continue
-                        
-                        val file = File(path)
-                        
-                        // Vérifier que le fichier existe réellement
-                        if (!file.exists() || file.length() == 0L) continue
-                        
-                        val uri = Uri.withAppendedPath(
-                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                            id
-                        )
-                    
-                        photosList.add(PhotoModel(id, uri, name, path, file))
-                    }
-                }
-                
-                // Vérifier s'il y a plus de photos
-                val countCursor = context.contentResolver.query(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    arrayOf("count(*) AS count"),
-                    selection,
-                    selectionArgs,
-                    null
-                )
-                
-                val totalCount = countCursor?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        cursor.getInt(0)
-                    } else {
-                        0
-                    }
-                } ?: 0
-                
-                countCursor?.close()
-                
-                // Mettre à jour l'état
-                _photos.value = photosList
-                _hasMorePhotos.value = totalCount > offset + photosList.size
-                
-                // Incrémenter la page pour le prochain chargement
-                if (_hasMorePhotos.value) {
-                    _currentPage.value = _currentPage.value + 1
-                }
-            
-                // Mettre à jour la photo sélectionnée
-                _selectedPhoto.value?.let { currentSelected -> 
-                    val updatedPhoto = photosList.find { it.uri == currentSelected.uri }
-                    _selectedPhoto.value = updatedPhoto
-                }
-                
-                _isLoading.value = false
-            } catch (e: Exception) {
-                // Si erreur, revenir aux photos internes
-                _isLoading.value = false
-                _photos.value = emptyList()
-                android.util.Log.e("FPR_DEBUG", "Erreur de chargement depuis la carte SD: ${e.message}")
-                loadPhotos(context)
-            }
+            loadPhotosFromFolder(context, appFolderPath)
         }
     }
     
@@ -551,11 +354,6 @@ class PhotosViewModel : ViewModel() {
     }
     
     fun renamePhoto(context: Context, photo: PhotoModel, newName: String): Boolean {
-        // Cette détection est utile mais ne doit pas être utilisée pour décider
-        // quelle source charger après le renommage
-        val isOnSDCard = photo.file.absolutePath.startsWith("/storage/") && 
-                        !photo.file.absolutePath.startsWith("/storage/emulated/0")
-                        
         // Créer un callback pour gérer les événements de renommage
         val callback = object : PhotoRenamer.RenameCallback {
             override fun onRenameSuccess(newName: String) {
@@ -570,19 +368,12 @@ class PhotosViewModel : ViewModel() {
                 if (reloadPhotos) {
                     viewModelScope.launch {
                         delay(500)
-                        // CORRECTION: Utiliser le mode global choisi par l'utilisateur
-                        // plutôt que l'emplacement de la photo spécifique
-                        if (_useSDCard.value) {
-                            loadPhotosFromSDCard(context)
-                        } else {
-                            loadPhotos(context)
-                        }
+                        loadPhotos(context)
                     }
                 }
             }
         }
         
-        // Cette ligne reste inchangée
         return PhotoRenamer.renamePhoto(context, photo, newName, callback)
     }
     
@@ -704,34 +495,15 @@ class PhotosViewModel : ViewModel() {
     }
 
     fun checkIfNameExists(currentPhotoPath: String, newFullName: String): Boolean {
-        try {
-            val currentFile = File(currentPhotoPath)
-            val parentDir = currentFile.parentFile ?: return false
-        
-            // Vérifier si le nom existe déjà dans le même répertoire
-            val possibleFile = File(parentDir, newFullName)
-        
-            // Vérifier aussi que ce n'est pas le fichier actuel (même chemin)
-            return possibleFile.exists() && possibleFile.absolutePath != currentFile.absolutePath
-        } catch (e: Exception) {
-            return false
-        }
-    }
-
-    // Ajouter ces méthodes dans la classe PhotosViewModel
-
-    // Vérifier si une carte SD est disponible
-    fun isSDCardAvailable(context: Context): Boolean {
-        val externalDirs = context.getExternalFilesDirs(null)
-        // S'il y a plus d'un répertoire externe, cela signifie qu'une carte SD est présente
-        return externalDirs.size > 1 && externalDirs[1] != null
+        val parentPath = FilePathUtils.getParentFolderPath(currentPhotoPath) ?: return false
+        return FilePathUtils.fileNameExistsInFolder(parentPath, newFullName)
     }
 
     fun importPhotosFromCamera(context: Context) {
         viewModelScope.launch {
             try {
-                val cameraDir = File(Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DCIM), "Camera")
+                val cameraFolderPath = FilePathUtils.getCameraFolderPath()
+                val cameraFolder = File(cameraFolderPath)
                 
                 val workingDir = File(_currentFolder.value)
                 if (!workingDir.exists()) {
@@ -740,8 +512,10 @@ class PhotosViewModel : ViewModel() {
                 }
                 
                 // Récupérer toutes les photos du dossier Camera
-                val cameraPhotos = cameraDir.listFiles { file -> 
-                    file.isFile && isImageFile(file.name) && !isTrashFile(file.name)
+                val cameraPhotos = cameraFolder.listFiles { file -> 
+                    file.isFile && 
+                    FilePathUtils.isImageFile(file.name) && 
+                    !FilePathUtils.isTrashFile(file.name)
                 } ?: emptyArray()
                 
                 if (cameraPhotos.isEmpty()) {
@@ -844,7 +618,7 @@ class PhotosViewModel : ViewModel() {
                 
                 // Récupérer la liste des photos du dossier source
                 val sourcePhotos = sourceDir.listFiles { file -> 
-                    file.isFile && isImageFile(file.name) && !isTrashFile(file.name)
+                    file.isFile && FilePathUtils.isImageFile(file.name) && !FilePathUtils.isTrashFile(file.name)
                 } ?: emptyArray()
                 
                 // Pour chaque photo
@@ -932,36 +706,34 @@ class PhotosViewModel : ViewModel() {
                     }
                 }
                 
-                // Le reste du code (message Toast, etc.) reste inchangé
-                // ...
+                // Message de résultat
+                if (moved > 0) {
+                    Toast.makeText(
+                        context,
+                        "$moved photos déplacées${if (skipped > 0) ", $skipped ignorées" else ""}${if (failed > 0) ", $failed échecs" else ""}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    
+                    // Déterminer quel dossier doit être rafraîchi
+                    when (_currentFolder.value) {
+                        sourceFolder -> {
+                            // Si on affiche le dossier source, le rafraîchir
+                            loadPhotosFromFolder(context, sourceFolder)
+                        }
+                        destinationFolder -> {
+                            // Si on affiche le dossier destination, le rafraîchir
+                            loadPhotosFromFolder(context, destinationFolder)
+                        }
+                        else -> {
+                            // Dans les autres cas, rafraîchir le dossier courant
+                            loadPhotosFromFolder(context, _currentFolder.value)
+                        }
+                    }
+                } else {
+                    Toast.makeText(context, "Aucune photo déplacée", Toast.LENGTH_SHORT).show()
+                }
             } catch (e: Exception) {
                 Toast.makeText(context, "Erreur: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-            if (moved > 0) {
-                Toast.makeText(
-                    context,
-                    "$moved photos déplacées${if (skipped > 0) ", $skipped ignorées" else ""}${if (failed > 0) ", $failed échecs" else ""}",
-                    Toast.LENGTH_SHORT
-                ).show()
-                
-                // NOUVEAU CODE - Rafraîchir selon le dossier affiché
-                // Déterminer quel dossier doit être rafraîchi
-                when (_currentFolder.value) {
-                    sourceFolder -> {
-                        // Si on affiche le dossier source, le rafraîchir
-                        loadPhotosFromFolder(context, sourceFolder)
-                    }
-                    destinationFolder -> {
-                        // Si on affiche le dossier destination, le rafraîchir
-                        loadPhotosFromFolder(context, destinationFolder)
-                    }
-                    else -> {
-                        // Dans les autres cas, rafraîchir le dossier courant
-                        loadPhotosFromFolder(context, _currentFolder.value)
-                    }
-                }
-            } else {
-                Toast.makeText(context, "Aucune photo déplacée", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -998,7 +770,7 @@ class PhotosViewModel : ViewModel() {
                     val data = cursor.getString(dataColumn)
                     
                     // Ignorer les fichiers "trashed"
-                    if (isTrashFile(name)) continue
+                    if (FilePathUtils.isTrashFile(name)) continue
                     
                     // Vérifier que le fichier existe réellement
                     val file = File(data)
@@ -1021,17 +793,6 @@ class PhotosViewModel : ViewModel() {
         
         return photosList
     }
-
-    private fun isTrashFile(fileName: String): Boolean {
-        val lowerName = fileName.toLowerCase()
-        return lowerName.startsWith("trashed-") ||
-               lowerName.startsWith(".trashed") ||
-               lowerName.contains("trash") ||
-               lowerName.contains("deleted") ||
-               lowerName.startsWith(".") ||  // Fichiers cachés
-               lowerName.contains("~") ||    // Fichiers temporaires
-               lowerName.endsWith(".tmp")    // Autres fichiers temporaires
-    }
     
     // Méthodes pour le mode plein écran
     
@@ -1046,7 +807,6 @@ class PhotosViewModel : ViewModel() {
             _fullscreenPhotoIndex.value = index
             // Ne pas mettre à jour la photo sélectionnée, pour éviter la confusion
             // lors de la sélection dans la grille après navigation en plein écran
-            // _selectedPhoto.value = _photos.value[index]  // Cette ligne est commentée pour corriger le bug
         }
     }
     
