@@ -328,6 +328,29 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Méthode pour demander l'accès complet aux fichiers (MANAGE_EXTERNAL_STORAGE)
+    fun requestAllFilesPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                val uri = Uri.fromParts("package", packageName, null)
+                intent.data = uri
+                startActivity(intent)
+                
+                // Afficher un message explicatif
+                Toast.makeText(
+                    this,
+                    "Veuillez accorder l'accès à tous les fichiers pour permettre le renommage des photos",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                // Fallback au cas où l'intent spécifique n'est pas supporté
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                startActivity(intent)
+            }
+        }
+    }
+
     fun getRequestDocumentTreeLauncher(): ActivityResultLauncher<Uri?> {
         return requestDocumentTreeLauncher
     }

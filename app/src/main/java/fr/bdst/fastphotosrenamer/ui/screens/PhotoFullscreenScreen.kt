@@ -180,6 +180,7 @@ fun PhotoFullscreenScreen(
                         viewModel.setFullscreenPhotoIndex(pagerState.currentPage)
                         viewModel.setWasInFullscreenMode(true)
                         // Désactiver temporairement le mode plein écran pour aller à l'écran de renommage
+                        // Ne pas fermer complètement le mode plein écran, juste le mettre en pause
                         viewModel.setFullscreenMode(false)
                         // Sélectionner la photo pour passer à l'écran de détail
                         viewModel.selectPhoto(currentPhoto)

@@ -23,8 +23,8 @@ android {
         applicationId = "fr.bdst.fastphotosrenamer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.1.8"
+        versionCode = 18
+        versionName = "1.1.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

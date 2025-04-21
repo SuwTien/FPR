@@ -151,30 +151,61 @@ object PhotoRenamer {
         try {
             // Vérifier que les paramètres sont valides
             if (newName.isBlank() || photo.path.isBlank()) {
+                val errorMsg = "Paramètres invalides: nom='$newName', chemin='${photo.path}'"
+                android.util.Log.e("PhotoRenamer", errorMsg)
                 emit(PhotoRepository.RenameResult(
                     success = false,
                     inProgress = false,
-                    error = "Paramètres invalides"
+                    error = errorMsg
                 ))
                 return@flow
             }
             
             val parentPath = FilePathUtils.getParentFolderPath(photo.path)
             if (parentPath == null) {
+                val errorMsg = "Chemin parent non trouvé pour: ${photo.path}"
+                android.util.Log.e("PhotoRenamer", errorMsg)
                 emit(PhotoRepository.RenameResult(
                     success = false,
                     inProgress = false,
-                    error = "Chemin parent non trouvé"
+                    error = errorMsg
                 ))
                 return@flow
             }
             
             val oldFile = File(photo.path)
             if (!oldFile.exists()) {
+                val errorMsg = "Fichier non trouvé: ${photo.path}"
+                android.util.Log.e("PhotoRenamer", errorMsg)
                 emit(PhotoRepository.RenameResult(
                     success = false,
                     inProgress = false,
-                    error = "Fichier non trouvé"
+                    error = errorMsg
+                ))
+                return@flow
+            }
+            
+            // Vérifier que le fichier source est accessible en lecture
+            if (!oldFile.canRead()) {
+                val errorMsg = "Fichier non lisible: ${photo.path}"
+                android.util.Log.e("PhotoRenamer", errorMsg)
+                emit(PhotoRepository.RenameResult(
+                    success = false,
+                    inProgress = false,
+                    error = errorMsg
+                ))
+                return@flow
+            }
+            
+            // Vérifier que le répertoire parent est accessible en écriture
+            val parentDir = File(parentPath)
+            if (!parentDir.canWrite()) {
+                val errorMsg = "Dossier parent non accessible en écriture: $parentPath"
+                android.util.Log.e("PhotoRenamer", errorMsg)
+                emit(PhotoRepository.RenameResult(
+                    success = false,
+                    inProgress = false,
+                    error = errorMsg
                 ))
                 return@flow
             }
@@ -184,23 +215,60 @@ object PhotoRenamer {
             
             // Vérifier si un fichier avec ce nom existe déjà
             if (newFile.exists()) {
+                val errorMsg = "Un fichier avec ce nom existe déjà: ${newFile.absolutePath}"
+                android.util.Log.e("PhotoRenamer", errorMsg)
                 emit(PhotoRepository.RenameResult(
                     success = false,
                     inProgress = false,
-                    error = "Un fichier avec ce nom existe déjà"
+                    error = errorMsg
                 ))
                 return@flow
             }
             
-            // Tentative de renommage direct du fichier
-            val success = oldFile.renameTo(newFile)
+            android.util.Log.d("PhotoRenamer", "Tentative de renommage: ${oldFile.absolutePath} -> ${newFile.absolutePath}")
+            
+            // Méthode alternative avec copie explicite puis suppression si renameTo échoue
+            var success = oldFile.renameTo(newFile)
+            
+            if (!success) {
+                android.util.Log.w("PhotoRenamer", "renameTo a échoué, tentative de copie/suppression")
+                
+                try {
+                    // Tenter une copie suivie d'une suppression
+                    oldFile.inputStream().use { input ->
+                        newFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    
+                    // Vérifier que la copie a réussi (taille et existence)
+                    if (newFile.exists() && newFile.length() == oldFile.length()) {
+                        // Suppression de l'ancien fichier
+                        success = oldFile.delete()
+                        if (!success) {
+                            android.util.Log.w("PhotoRenamer", "La copie a réussi mais la suppression a échoué")
+                            // On considère quand même que c'est un succès car le fichier est copié
+                            success = true
+                        }
+                    } else {
+                        android.util.Log.e("PhotoRenamer", "Échec de copie: nouveau fichier invalide")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("PhotoRenamer", "Erreur pendant la copie: ${e.message}", e)
+                    success = false
+                }
+            }
             
             if (success) {
+                android.util.Log.i("PhotoRenamer", "Renommage réussi: ${newFile.absolutePath}")
+                
                 // Mettre à jour MediaStore
-                val mainThreadOperations = updateMediaStoreFlow(context, photo, newFile)
+                updateMediaStoreFlow(context, photo, newFile)
                 
                 // Afficher message de confirmation dans le thread principal
-                Toast.makeText(context, "Photo renommée en $newName", Toast.LENGTH_SHORT).show()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Photo renommée en $newName", Toast.LENGTH_SHORT).show()
+                }
                 
                 emit(PhotoRepository.RenameResult(
                     success = true,
@@ -209,23 +277,33 @@ object PhotoRenamer {
                     reloadNeeded = true
                 ))
             } else {
+                val errorMsg = "Échec du renommage après plusieurs tentatives"
+                android.util.Log.e("PhotoRenamer", errorMsg)
+                
                 // Afficher message d'erreur dans le thread principal
-                Toast.makeText(context, "Échec du renommage", Toast.LENGTH_SHORT).show()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, errorMsg, Toast.LENGTH_SHORT).show()
+                }
                 
                 emit(PhotoRepository.RenameResult(
                     success = false,
                     inProgress = false,
-                    error = "Échec du renommage"
+                    error = errorMsg
                 ))
             }
         } catch (e: Exception) {
+            val errorMsg = "Erreur: ${e.message}"
+            android.util.Log.e("PhotoRenamer", errorMsg, e)
+            
             // Afficher message d'erreur dans le thread principal
-            Toast.makeText(context, "Erreur: ${e.message}", Toast.LENGTH_SHORT).show()
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, errorMsg, Toast.LENGTH_SHORT).show()
+            }
             
             emit(PhotoRepository.RenameResult(
                 success = false,
                 inProgress = false,
-                error = e.message
+                error = errorMsg
             ))
         }
     }.flowOn(Dispatchers.IO)

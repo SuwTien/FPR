@@ -196,7 +196,7 @@ fun PhotoDetailScreen(
                                         // Ne pas revenir immédiatement, attendre le résultat du renommage
                                         isRenaming = false 
                                         onRename(currentPhoto, newFullName, context)
-                                        // Ne PAS appeler onBack() ici, c'est fait dans le callback
+                                        // Ne JAMAIS appeler onBack() ici, c'est fait dans le callback du ViewModel
                                     }
                                 }
                             ),
@@ -275,7 +275,7 @@ fun PhotoDetailScreen(
                                     // Ne pas revenir immédiatement, attendre le résultat du renommage
                                     isRenaming = false 
                                     onRename(currentPhoto, newFullName, context)
-                                    // Ne PAS appeler onBack() ici, c'est fait dans le callback
+                                    // Ne JAMAIS appeler onBack() ici, c'est fait dans le callback du ViewModel
                                 }
                             },
                             enabled = isRenameEnabled,

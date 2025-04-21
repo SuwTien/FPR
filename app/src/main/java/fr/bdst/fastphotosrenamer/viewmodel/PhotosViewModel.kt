@@ -2,8 +2,11 @@ package fr.bdst.fastphotosrenamer.viewmodel
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
+import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import fr.bdst.fastphotosrenamer.MainActivity
 import fr.bdst.fastphotosrenamer.di.AppDependencies
 import fr.bdst.fastphotosrenamer.model.PhotoModel
 import fr.bdst.fastphotosrenamer.storage.FolderManager
@@ -178,25 +181,58 @@ class PhotosViewModel : ViewModel() {
      * @param onComplete Callback appelé lorsque l'opération est terminée, avec un booléen indiquant le succès
      */
     fun renamePhoto(context: Context, photo: PhotoModel, newName: String, onComplete: (Boolean) -> Unit) {
+        // Vérifier d'abord si nous avons l'autorisation de gérer les fichiers sur Android 11+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
+            // Demander la permission
+            if (context is MainActivity) {
+                context.requestAllFilesPermission()
+            }
+            // Indiquer que le renommage n'a pas pu être effectué par manque de permissions
+            onComplete(false)
+            return
+        }
+        
         _isRenameOperationInProgress.value = true
         
         viewModelScope.launch {
-            PhotoRenamer.renamePhotoFlow(context, photo, newName)
-                .collect { result ->
-                    if (!result.inProgress) {
-                        _isRenameOperationInProgress.value = false
-                        
-                        if (result.success) {
-                            // Recharger les photos si nécessaire
-                            if (result.reloadNeeded) {
-                                loadPhotos(context, _currentFolder.value)
+            try {
+                // Capturer l'état du mode plein écran avant le renommage
+                val wasInFullscreen = _wasInFullscreenMode.value
+                val fullscreenIndex = _fullscreenPhotoIndex.value
+                
+                PhotoRenamer.renamePhotoFlow(context, photo, newName)
+                    .collect { result ->
+                        if (!result.inProgress) {
+                            _isRenameOperationInProgress.value = false
+                            
+                            if (result.success) {
+                                // Recharger les photos si nécessaire
+                                if (result.reloadNeeded) {
+                                    loadPhotos(context, _currentFolder.value)
+                                }
+                                
+                                // Utiliser withContext(Dispatchers.Main) pour s'assurer que le callback
+                                // est exécuté sur le thread principal
+                                withContext(Dispatchers.Main) {
+                                    // Appeler le callback pour indiquer le succès
+                                    onComplete(true)
+                                }
+                            } else {
+                                // Utiliser withContext(Dispatchers.Main) pour s'assurer que le callback
+                                // est exécuté sur le thread principal
+                                withContext(Dispatchers.Main) {
+                                    onComplete(false)
+                                }
                             }
-                            onComplete(true)
-                        } else {
-                            onComplete(false)
                         }
                     }
+            } catch (e: Exception) {
+                // Gérer les erreurs et appeler le callback avec false
+                _isRenameOperationInProgress.value = false
+                withContext(Dispatchers.Main) {
+                    onComplete(false)
                 }
+            }
         }
     }
     

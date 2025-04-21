@@ -191,6 +191,9 @@ fun MainScreen(
                             viewModel.clearSelectedPhoto()
                             viewModel.setFullscreenMode(true)
                             viewModel.resetWasInFullscreenMode()
+                        } else {
+                            // Sinon, revenir à la grille
+                            viewModel.clearSelectedPhoto()
                         }
                     }
                 },
